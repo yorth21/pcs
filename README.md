@@ -39,7 +39,7 @@ make build
 | `pcs doctor [--scope global\|workspace\|profile] [--profile <name>] [--profile-dir <dir>] [--target-dir <dir>] [--json]` | Run diagnostic checks on `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation (including profile authentication and PATH status) |
 | `pcs skill-registry refresh [--cwd <dir>] [--skills-dir <dir>] [--json]` | Scan `SKILL.md` frontmatter and write deterministic `.atl/pcs-skill-registry.md` with SHA-256 cache-hit header |
 | `pcs codegraph init [--cwd <dir>] [--json]` | Validate project root (refusing `$HOME`, `/`, `os.TempDir()`, `/tmp`, `/var/tmp`) and initialize `.codegraph/` index |
-| `pcs uninstall [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--remove-mcp] [--dry-run] [--json]` | Cleanly remove all 5 `pcs:*` markers, `pcs-*` native subagents, `pcs-*` skills, `.atl/pcs-skill-registry.md`, launchers, `shared-mcp.json`, and `pcs`-added MCP/hook deltas without touching user files |
+| `pcs uninstall [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--remove-mcp [--force]] [--dry-run] [--json]` | Cleanly remove all 5 `pcs:*` markers, `pcs-*` native subagents, `pcs-*` skills, `.atl/pcs-skill-registry.md`, launchers, `shared-mcp.json`, and `pcs`-added MCP/hook deltas without touching user files. MCP servers, permissions, and plugins are removed only when `.pcs-state.json` records that `pcs` added them (an empty record removes nothing). Without a record, `--remove-mcp` refuses unless `--force` is given, which removes the default `engram`, `context7`, and `codegraph` entries and the `engram@engram` plugin with a warning |
 | `pcs version [--json]` | Print `pcs` CLI version |
 
 ---

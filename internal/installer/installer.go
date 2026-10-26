@@ -36,6 +36,10 @@ const (
 // commands that only operate on existing installations (sync) must refuse.
 var ErrNotInstalled = errors.New("no pcs installation found")
 
+// ErrNoMCPRecord reports that uninstall --remove-mcp cannot prove which MCP
+// servers, permissions, and plugins pcs added because no state record exists.
+var ErrNoMCPRecord = errors.New("no record of pcs-added MCP servers, permissions, or plugins")
+
 // Installation identifies an existing pcs install discovered via its state file.
 type Installation struct {
 	Scope     string `json:"scope"`
@@ -62,6 +66,7 @@ type Options struct {
 	WithMCP         bool
 	DryRun          bool
 	RemoveMCP       bool
+	Force           bool
 	LauncherDir     string
 	LauncherArgs    string
 	NoStatusLine    bool
@@ -71,20 +76,23 @@ type Options struct {
 
 // State persists the installed pcs configuration in <target-dir>/.pcs-state.json.
 type State struct {
-	Version             string   `json:"version"`
-	InstalledAt         string   `json:"installed_at"`
-	Scope               string   `json:"scope"`
-	TargetDir           string   `json:"target_dir"`
-	Adapter             string   `json:"adapter"`
-	Persona             string   `json:"persona"`
-	MCPGuidance         bool     `json:"mcp_guidance"`
-	WriteMCPConfig      bool     `json:"write_mcp_config"`
-	WriteHook           bool     `json:"write_hook"`
-	WithMCP             bool     `json:"with_mcp"`
-	EnabledMCPs         []string `json:"enabled_mcps"`
-	AddedMCPServers     []string `json:"added_mcp_servers,omitempty"`
-	AddedPermissions    []string `json:"added_permissions,omitempty"`
-	AddedPlugins        []string `json:"added_plugins,omitempty"`
+	Version        string   `json:"version"`
+	InstalledAt    string   `json:"installed_at"`
+	Scope          string   `json:"scope"`
+	TargetDir      string   `json:"target_dir"`
+	Adapter        string   `json:"adapter"`
+	Persona        string   `json:"persona"`
+	MCPGuidance    bool     `json:"mcp_guidance"`
+	WriteMCPConfig bool     `json:"write_mcp_config"`
+	WriteHook      bool     `json:"write_hook"`
+	WithMCP        bool     `json:"with_mcp"`
+	EnabledMCPs    []string `json:"enabled_mcps"`
+	// AddedMCPServers, AddedPermissions, and AddedPlugins record exactly what pcs
+	// added. They are never omitted: an empty list ([]) is a record that pcs
+	// added nothing, while a missing or null field (nil) means no record exists.
+	AddedMCPServers     []string `json:"added_mcp_servers"`
+	AddedPermissions    []string `json:"added_permissions"`
+	AddedPlugins        []string `json:"added_plugins"`
 	AddedHook           bool     `json:"added_hook,omitempty"`
 	CreatedClaudeMD     bool     `json:"created_claude_md,omitempty"`
 	CreatedClaudeJSON   bool     `json:"created_claude_json,omitempty"`
@@ -94,6 +102,12 @@ type State struct {
 	AddedStatusLine     bool     `json:"added_status_line,omitempty"`
 	SharedMCPFile       string   `json:"shared_mcp_file,omitempty"`
 	ManagedFiles        []string `json:"managed_files"`
+}
+
+// hasMCPDeltaRecord reports whether the state records exactly which MCP servers,
+// permissions, and plugins pcs added (possibly none).
+func (s *State) hasMCPDeltaRecord() bool {
+	return s != nil && s.AddedMCPServers != nil && s.AddedPermissions != nil && s.AddedPlugins != nil
 }
 
 // AgentOwnership tracks which native subagent files in agents/ are owned by pcs.
@@ -125,6 +139,7 @@ type Report struct {
 	LauncherDir    string   `json:"launcher_dir,omitempty"`
 	LauncherOnPath bool     `json:"launcher_on_path"`
 	NextSteps      []string `json:"next_steps,omitempty"`
+	Warnings       []string `json:"warnings,omitempty"`
 	Actions        []Action `json:"actions"`
 }
 
@@ -680,15 +695,18 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 
 	// 4. Configure MCP servers (.claude.json) and/or settings.json only when explicitly requested.
 	var enabledMCPs []string
-	var addedMCPServers []string
-	var addedPermissions []string
-	var addedPlugins []string
+	// Start with empty (non-nil) records: a fresh install knows it added nothing yet.
+	addedMCPServers := []string{}
+	addedPermissions := []string{}
+	addedPlugins := []string{}
 	addedHook := false
 	createdClaudeMD := !claudeMDExisted
 	createdClaudeJSON := false
 	createdSettingsJSON := false
 
 	if prevState != nil {
+		// slices.Clone preserves nil, so a legacy state without a record stays
+		// unrecorded unless this run adds entries (a safe, partial record).
 		addedMCPServers = slices.Clone(prevState.AddedMCPServers)
 		addedPermissions = slices.Clone(prevState.AddedPermissions)
 		addedPlugins = slices.Clone(prevState.AddedPlugins)
@@ -915,6 +933,11 @@ func Uninstall(opts Options) (*Report, error) {
 	statePath := filepath.Join(layout.targetDir, StateFileName)
 	savedState, _ := readState(statePath)
 
+	// Refuse before touching anything when --remove-mcp cannot be proven safe.
+	if opts.RemoveMCP && !savedState.hasMCPDeltaRecord() && !opts.Force {
+		return nil, fmt.Errorf("%w in %s: refusing --remove-mcp because pcs cannot prove which entries it added; re-run with --force to remove the default engram, context7, and codegraph servers, their permissions, and the engram@engram plugin even if they predate pcs", ErrNoMCPRecord, statePath)
+	}
+
 	report := &Report{
 		Operation: "uninstall",
 		Scope:     layout.scope,
@@ -1021,10 +1044,10 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 	}
 
-	// 4. Unmerge pcs-added MCP entries and hooks using saved state delta (or ForceRemoveAllMCP when --remove-mcp is set).
-	delta := mcp.UnmergeDelta{
-		ForceRemoveAllMCP: opts.RemoveMCP,
-	}
+	// 4. Unmerge exactly the pcs-added MCP entries recorded in the saved state (an
+	// empty record removes nothing). Defaults are removed only with --remove-mcp
+	// --force when no record exists.
+	delta := mcp.UnmergeDelta{}
 	if savedState != nil {
 		delta.CreatedClaudeJSON = savedState.CreatedClaudeJSON
 		delta.CreatedSettingsJSON = savedState.CreatedSettingsJSON
@@ -1032,6 +1055,11 @@ func Uninstall(opts Options) (*Report, error) {
 		delta.AddedPermissions = slices.Clone(savedState.AddedPermissions)
 		delta.AddedPlugins = slices.Clone(savedState.AddedPlugins)
 		delta.AddedHook = savedState.AddedHook
+	}
+	if opts.RemoveMCP && !savedState.hasMCPDeltaRecord() {
+		delta.ForceRemoveAllMCP = true
+		report.Warnings = append(report.Warnings,
+			"--force: no record of pcs-added MCP entries; removing the default engram, context7, and codegraph servers, their permissions, and the engram@engram plugin even if they predate pcs")
 	}
 	if !opts.DryRun {
 		_ = mcp.UnmergeWithDelta(layout.claudeJSONPath, layout.settingsJSONPath, delta)

@@ -264,7 +264,8 @@ func runUninstall(args []string, env Env) int {
 	profileAlias := fs.Bool("profile", false, "Shorthand for --scope profile")
 	profileDir := fs.String("profile-dir", "", "Custom profile directory when using --scope profile")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
-	removeMCP := fs.Bool("remove-mcp", false, "Also remove all engram, context7, and codegraph MCP entries in global/workspace scopes")
+	removeMCP := fs.Bool("remove-mcp", false, "Remove pcs MCP servers, permissions, and plugins recorded in .pcs-state.json (an empty record removes nothing); refuses without a record unless --force")
+	force := fs.Bool("force", false, "With --remove-mcp and no install record, remove the default engram, context7, and codegraph servers, their permissions, and the engram@engram plugin (prints a warning)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned uninstall actions without removing files")
 	asJSON := fs.Bool("json", false, "Output uninstall report as JSON")
 
@@ -283,11 +284,15 @@ func runUninstall(args []string, env Env) int {
 		HomeDir:         env.HomeDir,
 		ClaudeConfigDir: env.ClaudeConfigDir,
 		RemoveMCP:       *removeMCP,
+		Force:           *force,
 		DryRun:          *dryRun,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "pcs uninstall failed: %v\n", err)
 		return 1
+	}
+	for _, w := range rep.Warnings {
+		fmt.Fprintf(env.Stderr, "warning: %s\n", w)
 	}
 	if *asJSON {
 		return writeJSONOutput(env.Stdout, rep)
@@ -644,6 +649,8 @@ Key Flags (install / sync / uninstall / status):
   --mcp-guidance=true|false          Inject pcs:codegraph-guidance and pcs:engram-protocol into CLAUDE.md (default: true)
   --write-mcp-config                 Write missing engram, context7, and codegraph MCP entries into .claude.json and settings.json (default: false)
   --write-hook                       Write UserPromptSubmit skill-registry refresh hook into settings.json (default: false)
+  --remove-mcp                       (uninstall) Remove only the MCP servers, permissions, and plugins pcs recorded as added
+  --force                            (uninstall) With --remove-mcp and no install record, remove the default MCP entries anyway
   --dry-run                          Preview planned actions without modifying disk
   --json                             Emit structured JSON output
 `)

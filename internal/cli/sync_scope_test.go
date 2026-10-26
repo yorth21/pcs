@@ -191,3 +191,37 @@ func TestInstallProfileRefusesMainConfigDir(t *testing.T) {
 	}
 	assertSameFiles(t, "home", before, snapshotFiles(t, home))
 }
+
+func TestUninstallRemoveMCPWithoutStateRequiresForce(t *testing.T) {
+	home := isolateCLIEnv(t)
+	seedMain(t, home)
+	claudeJSON := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(claudeJSON, []byte("{\n  \"mcpServers\": {\n    \"engram\": {}\n  }\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotFiles(t, home)
+
+	code, _, stderr := runCLI(t, home, "uninstall", "--remove-mcp")
+	if code == 0 {
+		t.Fatalf("uninstall --remove-mcp without state exit 0, want refusal")
+	}
+	if !strings.Contains(stderr, "--force") {
+		t.Errorf("stderr = %q, want a hint about --force", stderr)
+	}
+	assertSameFiles(t, "home", before, snapshotFiles(t, home))
+
+	code, _, stderr = runCLI(t, home, "uninstall", "--remove-mcp", "--force")
+	if code != 0 {
+		t.Fatalf("uninstall --remove-mcp --force exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(strings.ToLower(stderr), "warning") {
+		t.Errorf("stderr = %q, want a warning for forced removal", stderr)
+	}
+	b, err := os.ReadFile(claudeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "engram") {
+		t.Errorf("expected forced removal of engram, got:\n%s", b)
+	}
+}
