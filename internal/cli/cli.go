@@ -124,6 +124,30 @@ func runInstall(args []string, env Env) int {
 		overrides["scope"] = true
 	}
 
+	// The global default must never silently add a second install next to an
+	// existing profile-only install: require an explicit --scope instead.
+	if !explicitTargetFlag(overrides) && strings.TrimSpace(os.Getenv("PCS_INSTALL_SCOPE")) == "" {
+		found, err := installer.DiscoverInstalls(installer.Options{HomeDir: env.HomeDir, ClaudeConfigDir: env.ClaudeConfigDir})
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "pcs install failed: %v\n", err)
+			return 1
+		}
+		hasGlobal := false
+		var profiles []string
+		for _, inst := range found {
+			switch inst.Scope {
+			case installer.ScopeGlobal:
+				hasGlobal = true
+			case installer.ScopeProfile:
+				profiles = append(profiles, inst.TargetDir)
+			}
+		}
+		if !hasGlobal && len(profiles) > 0 {
+			fmt.Fprintf(env.Stderr, "pcs install failed: a pcs profile install exists at %s and there is no global install; pass --scope profile to re-install the profile, or --scope global to install into the main Claude profile\n", strings.Join(profiles, ", "))
+			return 1
+		}
+	}
+
 	rep, err := installer.Install(installer.Options{
 		Scope:           chosenScope,
 		TargetDir:       *targetDir,
@@ -197,31 +221,13 @@ func runSync(args []string, env Env) int {
 	// Without any explicit target selector, sync only existing installs found via
 	// their .pcs-state.json; it never falls back to creating a global install.
 	if chosenScope == "" && !overrides["target-dir"] && strings.TrimSpace(os.Getenv("PCS_INSTALL_SCOPE")) == "" {
-		found, err := installer.DiscoverInstalls(installer.Options{HomeDir: env.HomeDir, ClaudeConfigDir: env.ClaudeConfigDir})
-		if err != nil {
-			fmt.Fprintf(env.Stderr, "pcs sync failed: %v\n", err)
+		inst, ok := discoverSingleInstall("sync", "run 'pcs install' first, or pass --scope, --profile-dir, or --target-dir", env)
+		if !ok {
 			return 1
 		}
-		switch len(found) {
-		case 0:
-			fmt.Fprintf(env.Stderr, "pcs sync failed: no pcs installation found (checked the global target and the default profile); run 'pcs install' first, or pass --scope, --profile-dir, or --target-dir\n")
-			return 1
-		case 1:
-			chosenScope = found[0].Scope
-			overrides["scope"] = true
-			switch found[0].Scope {
-			case installer.ScopeProfile:
-				chosenProfileDir = found[0].TargetDir
-			case installer.ScopeWorkspace:
-				chosenTargetDir = found[0].TargetDir
-			}
-		default:
-			fmt.Fprintf(env.Stderr, "pcs sync failed: multiple pcs installations found; re-run with --scope (and --profile-dir for a custom profile) to choose one:\n")
-			for _, inst := range found {
-				fmt.Fprintf(env.Stderr, "  - %s: %s\n", inst.Scope, inst.TargetDir)
-			}
-			return 1
-		}
+		chosenScope = inst.Scope
+		overrides["scope"] = true
+		chosenProfileDir, chosenTargetDir = installDirs(inst, chosenProfileDir, chosenTargetDir)
 	}
 
 	var mcpGuidancePtr *bool
@@ -275,15 +281,32 @@ func runUninstall(args []string, env Env) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	chosenScope := profileDirImpliesProfile(*scope, visitedFlags(fs))
+	visited := visitedFlags(fs)
+	if *force && !explicitTargetFlag(visited) {
+		fmt.Fprintf(env.Stderr, "pcs uninstall failed: --force requires an explicit target: pass --scope (global, workspace, or profile), --profile-dir, or --target-dir on the command line (PCS_INSTALL_SCOPE alone is not enough)\n")
+		return 1
+	}
+	chosenScope := profileDirImpliesProfile(*scope, visited)
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
+	}
+	chosenProfileDir, chosenTargetDir := *profileDir, *targetDir
+
+	// Without any explicit target selector, uninstall behaves like sync: it only
+	// removes the single existing install found via its .pcs-state.json.
+	if !explicitTargetFlag(visited) && strings.TrimSpace(os.Getenv("PCS_INSTALL_SCOPE")) == "" {
+		inst, ok := discoverSingleInstall("uninstall", "pass --scope, --profile-dir, or --target-dir to target one explicitly", env)
+		if !ok {
+			return 1
+		}
+		chosenScope = inst.Scope
+		chosenProfileDir, chosenTargetDir = installDirs(inst, chosenProfileDir, chosenTargetDir)
 	}
 
 	rep, err := installer.Uninstall(installer.Options{
 		Scope:           chosenScope,
-		TargetDir:       *targetDir,
-		ProfileDir:      *profileDir,
+		TargetDir:       chosenTargetDir,
+		ProfileDir:      chosenProfileDir,
 		HomeDir:         env.HomeDir,
 		ClaudeConfigDir: env.ClaudeConfigDir,
 		RemoveMCP:       *removeMCP,
@@ -357,6 +380,47 @@ func profileDirImpliesProfile(scope string, visited map[string]bool) string {
 		return installer.ScopeProfile
 	}
 	return scope
+}
+
+// explicitTargetFlag reports whether a target selector was passed on the
+// command line: --scope, --profile, --profile-dir, or --target-dir.
+func explicitTargetFlag(visited map[string]bool) bool {
+	return visited["scope"] || visited["profile"] || visited["profile-dir"] || visited["target-dir"]
+}
+
+// discoverSingleInstall returns the only existing pcs install (global target or
+// default profile). It prints the refusal and returns false when none or
+// several are found; hint tells the user how to proceed when none exists.
+func discoverSingleInstall(cmd, hint string, env Env) (installer.Installation, bool) {
+	found, err := installer.DiscoverInstalls(installer.Options{HomeDir: env.HomeDir, ClaudeConfigDir: env.ClaudeConfigDir})
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "pcs %s failed: %v\n", cmd, err)
+		return installer.Installation{}, false
+	}
+	switch len(found) {
+	case 0:
+		fmt.Fprintf(env.Stderr, "pcs %s failed: no pcs installation found (checked the global target and the default profile); %s\n", cmd, hint)
+	case 1:
+		return found[0], true
+	default:
+		fmt.Fprintf(env.Stderr, "pcs %s failed: multiple pcs installations found; re-run with --scope (and --profile-dir for a custom profile) to choose one:\n", cmd)
+		for _, inst := range found {
+			fmt.Fprintf(env.Stderr, "  - %s: %s\n", inst.Scope, inst.TargetDir)
+		}
+	}
+	return installer.Installation{}, false
+}
+
+// installDirs maps a discovered install onto the --profile-dir or --target-dir
+// value that selects it, keeping the given values otherwise.
+func installDirs(inst installer.Installation, profileDir, targetDir string) (string, string) {
+	switch inst.Scope {
+	case installer.ScopeProfile:
+		profileDir = inst.TargetDir
+	case installer.ScopeWorkspace:
+		targetDir = inst.TargetDir
+	}
+	return profileDir, targetDir
 }
 
 func visitedFlags(fs *flag.FlagSet) map[string]bool {
@@ -649,9 +713,11 @@ Usage:
 
 Commands:
   install                  Install pcs orchestrator, 5 native subagents, skills, and optional MCP config
+                           (without --scope it refuses when only a profile install exists)
   sync                     Re-sync an existing installation (never creates one; without --scope it
                            discovers existing installs and requires --scope when several exist)
-  uninstall                Cleanly remove pcs-owned markers, native subagents, and skills
+  uninstall                Cleanly remove pcs-owned markers, native subagents, and skills (without --scope
+                           it discovers existing installs like sync)
   status                   Inspect installed markers, native subagents, skills, and MCP servers
   doctor                   Run diagnostic checks on MCP binaries, embedded brain, and target dir
   skill-registry refresh   Scan SKILL.md files and generate .atl/pcs-skill-registry.md
@@ -670,6 +736,7 @@ Key Flags (install / sync / uninstall / status):
   --write-hook                       Write UserPromptSubmit skill-registry refresh hook into settings.json (default: false)
   --remove-mcp                       (uninstall) Remove only the MCP servers, permissions, and plugins pcs recorded as added
   --force                            (uninstall) With --remove-mcp and no install record, remove the default MCP entries anyway
+                                     (requires --scope, --profile-dir, or --target-dir on the command line)
   --dry-run                          Preview planned actions without modifying disk
   --json                             Emit structured JSON output
 `)

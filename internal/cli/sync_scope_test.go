@@ -207,7 +207,7 @@ func TestUninstallRemoveMCPWithoutStateRequiresForce(t *testing.T) {
 	}
 	before := snapshotFiles(t, home)
 
-	code, _, stderr := runCLI(t, home, "uninstall", "--remove-mcp")
+	code, _, stderr := runCLI(t, home, "uninstall", "--scope", "global", "--remove-mcp")
 	if code == 0 {
 		t.Fatalf("uninstall --remove-mcp without state exit 0, want refusal")
 	}
@@ -216,7 +216,7 @@ func TestUninstallRemoveMCPWithoutStateRequiresForce(t *testing.T) {
 	}
 	assertSameFiles(t, "home", before, snapshotFiles(t, home))
 
-	code, _, stderr = runCLI(t, home, "uninstall", "--remove-mcp", "--force")
+	code, _, stderr = runCLI(t, home, "uninstall", "--scope", "global", "--remove-mcp", "--force")
 	if code != 0 {
 		t.Fatalf("uninstall --remove-mcp --force exit %d: %s", code, stderr)
 	}

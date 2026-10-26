@@ -369,29 +369,72 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 	return layout, nil
 }
 
-// guardProfileTarget refuses a profile target that resolves to the main Claude
-// configuration directory (~/.claude, or $CLAUDE_CONFIG_DIR when set). The
-// CLAUDE_CONFIG_DIR check is skipped when that directory already holds a pcs
-// profile install, which is the case inside a claude-pcs launcher session.
+// guardProfileTarget refuses a profile target that overlaps the main Claude
+// profile: the home directory, the main configuration directory (~/.claude, or
+// $CLAUDE_CONFIG_DIR when set) or any of its ancestors, or a directory whose
+// derived .claude.json or settings.json is the main profile's file (for example
+// through a symlink). The $CLAUDE_CONFIG_DIR checks are skipped when that
+// directory already holds a pcs profile install, which is the case inside a
+// claude-pcs launcher session; ~/.claude is never exempt.
 func guardProfileTarget(absTarget, absHome, claudeConfigDir string) error {
+	if samePath(absTarget, absHome) {
+		return fmt.Errorf("refusing profile target %s: it is the home directory, so the profile .claude.json would be the main ~/.claude.json; choose another --profile-dir", absTarget)
+	}
+	type mainProfile struct {
+		dir, label string
+		files      []string
+	}
 	mainDir := filepath.Join(absHome, ".claude")
-	if samePath(absTarget, mainDir) {
-		return fmt.Errorf("refusing profile target %s: it is the main Claude config directory; choose another --profile-dir", absTarget)
+	mains := []mainProfile{{
+		dir:   mainDir,
+		label: "the main Claude config directory",
+		files: []string{filepath.Join(absHome, ".claude.json"), filepath.Join(mainDir, ".claude.json"), filepath.Join(mainDir, "settings.json")},
+	}}
+	if claudeConfigDir != "" {
+		absConfig, err := filepath.Abs(claudeConfigDir)
+		if err != nil {
+			absConfig = claudeConfigDir
+		}
+		if saved, err := readState(filepath.Join(absConfig, StateFileName)); err != nil || saved.Scope != ScopeProfile {
+			mains = append(mains, mainProfile{
+				dir:   absConfig,
+				label: "the main Claude config directory ($CLAUDE_CONFIG_DIR)",
+				files: []string{filepath.Join(absConfig, ".claude.json"), filepath.Join(absConfig, "settings.json")},
+			})
+		}
 	}
-	if claudeConfigDir == "" {
-		return nil
+
+	derived := []string{filepath.Join(absTarget, ".claude.json"), filepath.Join(absTarget, "settings.json")}
+	for _, m := range mains {
+		if samePath(absTarget, m.dir) {
+			return fmt.Errorf("refusing profile target %s: it is %s; choose another --profile-dir", absTarget, m.label)
+		}
+		if isAncestorPath(absTarget, m.dir) {
+			return fmt.Errorf("refusing profile target %s: it contains %s %s; choose another --profile-dir", absTarget, m.label, m.dir)
+		}
+		for _, own := range derived {
+			for _, mainFile := range m.files {
+				if samePath(own, mainFile) {
+					return fmt.Errorf("refusing profile target %s: its %s is the main profile file %s; choose another --profile-dir", absTarget, filepath.Base(own), mainFile)
+				}
+			}
+		}
 	}
-	absConfig, err := filepath.Abs(claudeConfigDir)
-	if err != nil {
-		absConfig = claudeConfigDir
+	return nil
+}
+
+// isAncestorPath reports whether ancestor strictly contains p after both are
+// canonicalized like samePath. Comparison is case-insensitive on Windows.
+func isAncestorPath(ancestor, p string) bool {
+	a, b := canonicalPath(ancestor), canonicalPath(p)
+	if runtime.GOOS == "windows" {
+		a, b = strings.ToLower(a), strings.ToLower(b)
 	}
-	if !samePath(absTarget, absConfig) {
-		return nil
+	rel, err := filepath.Rel(a, b)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
 	}
-	if saved, err := readState(filepath.Join(absTarget, StateFileName)); err == nil && saved.Scope == ScopeProfile {
-		return nil
-	}
-	return fmt.Errorf("refusing profile target %s: it is the main Claude config directory ($CLAUDE_CONFIG_DIR); choose another --profile-dir", absTarget)
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // samePath reports whether a and b name the same location after making them
