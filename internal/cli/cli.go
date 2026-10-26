@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -540,7 +541,17 @@ func validateCodeGraphRoot(root, homeDir string) (string, error) {
 		}
 	}
 
-	forbiddenTempRoots := []string{"/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp"}
+	// Temporary directories are refused before the existence check so the
+	// refusal reason is stable on every platform. The Unix roots only apply off
+	// Windows, where "/tmp" resolves to an unrelated "<drive>:\tmp".
+	var forbiddenTempRoots []string
+	if runtime.GOOS == "windows" {
+		if systemRoot := strings.TrimSpace(os.Getenv("SystemRoot")); systemRoot != "" {
+			forbiddenTempRoots = append(forbiddenTempRoots, filepath.Join(systemRoot, "Temp"))
+		}
+	} else {
+		forbiddenTempRoots = append(forbiddenTempRoots, "/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp")
+	}
 	if sysTmp := strings.TrimSpace(os.TempDir()); sysTmp != "" {
 		if absTmp, err := filepath.Abs(sysTmp); err == nil {
 			forbiddenTempRoots = append(forbiddenTempRoots, absTmp)

@@ -79,7 +79,8 @@ func installLauncherForExec(t *testing.T, launcherArgs string, extraTools ...str
 	t.Setenv("PATH", strings.Join(append([]string{fakeDir}, toolDirs...), string(os.PathListSeparator)))
 	t.Setenv(fakeClaudeEnv, "1")
 
-	profileDir = filepath.Join(home, "profile with spaces", ".claude-pcs")
+	// The apostrophe, percent sign, and spaces exercise path quoting in every launcher syntax.
+	profileDir = filepath.Join(home, "O'Reilly 100% profile", ".claude-pcs")
 	launcherDir = filepath.Join(home, "bin with spaces")
 	if _, err := Install(Options{
 		Scope:        ScopeProfile,

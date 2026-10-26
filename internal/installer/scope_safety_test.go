@@ -16,8 +16,14 @@ func isolateEnv(t *testing.T) string {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("PCS_INSTALL_SCOPE", "")
+	// PATH holds only an empty directory, so no real claude (or other tool) is found.
 	t.Setenv("PATH", t.TempDir())
 	return home
 }
