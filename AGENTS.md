@@ -1,14 +1,15 @@
 # AGENTS.md — Product Composition System (`pcs`) Registry
 
-This file is the authoritative registry of orchestrator blocks, native subagents, and LLM-first skills inside the Product Composition System (`pcs`) repository.
+This file is the authoritative registry of orchestrator blocks, native subagents, LLM-first skills, and Go CLI packages inside the Product Composition System (`pcs`) repository.
 
 ---
 
 ## 1. Repository Governance & Hard Rules
 
 1. **Normative Skill Style Guide**: Before creating or updating any skill in `brain/skills/`, read and obey [`docs/skill-style-guide.md`](file:///Users/yorth21/Developer/SideProjects/pcs/docs/skill-style-guide.md).
-2. **Artifact Language Contract**: Every file, prompt, specification, template, comment, UI string, and code blueprint in this repository MUST be written in clear, rigorous, professional English. Never inject regional slang or non-English identifiers into any artifact.
-3. **Zero External Company Names in `brain/`**: Inside `brain/`, never reference external product companies as shorthand for design quality. Encode every UX principle, cognitive law, heuristic, and visual rule directly as an explicit, testable engineering constraint. (Technical library and tool dependencies such as React, TypeScript, Tailwind CSS, `shadcn/ui`, Radix UI, TanStack, React Hook Form, Zod, Playwright, Engram, Context7, CodeGraph, and `gentle-ai` are permitted where technically relevant.)
+2. **Artifact Language Contract**: Every file, prompt, specification, template, comment, UI string, Go identifier, test, and code blueprint in this repository MUST be written in clear, rigorous, professional English. Never inject regional slang or non-English identifiers into any artifact.
+3. **Zero External Company Names in `brain/` and CLI**: Never reference external product companies as shorthand for design quality. Encode every UX principle, cognitive law, heuristic, and visual rule directly as an explicit, testable engineering constraint. (Technical library and tool dependencies such as React, TypeScript, Tailwind CSS, `shadcn/ui`, Radix UI, TanStack, React Hook Form, Zod, Playwright, Engram, Context7, CodeGraph, and `gentle-ai` are permitted where technically relevant.)
+4. **Go Testing & Zero-Dependency Discipline**: The Go CLI (`cmd/pcs`, `internal/**`) uses only the Go standard library (`go.mod` has zero external dependencies). All filesystem tests MUST use `t.TempDir()` and pass `go test -v -race ./...` and `go vet ./...`.
 
 ---
 
@@ -45,3 +46,18 @@ This file is the authoritative registry of orchestrator blocks, native subagents
 |--------------|---------|------------|
 | `<!-- pcs:orchestrator -->` ... `<!-- /pcs:orchestrator -->` | Product & UX/UI Coordinator role, Lossless Blocking Prompts, Allowed Edit Surfaces, Skill & Stack Adapter Resolution, and UX Delegation Triggers | `brain/orchestrator/pcs-orchestrator.md` |
 | `<!-- pcs:ux-routing -->` ... `<!-- /pcs:ux-routing -->` | Mandatory 8-step Product-Centered Development (PCD) workflow across the 5 Planes of UX | `brain/orchestrator/pcs-routing.md` |
+
+---
+
+## 5. Go CLI Architecture (`cmd/pcs` & `internal/`)
+
+| Package | Responsibility | Exact Path |
+|---------|----------------|------------|
+| `pcs` (root) | Embeds `all:brain` and `docs/skill-style-guide.md` into `BrainFS` via `//go:embed` | `embed.go` |
+| `internal/assets` | Typed accessors for embedded orchestrator blocks, native subagents, skills, and base `gentle-ai` blocks (`codegraph-guidance`, `persona`, `engram-protocol`) | `internal/assets/assets.go` |
+| `internal/marker` | Idempotent HTML-comment section manager (`UpsertBlock`, `RemoveBlock`, `HasBlock`, `ExtractBlock`) for `CLAUDE.md` | `internal/marker/marker.go` |
+| `internal/mcp` | Atomic JSON merger/unmerger with `.bak` backups for `engram`, `context7`, and `codegraph` MCP servers in `.claude.json` and permissions/hooks in `settings.json` | `internal/mcp/mcp.go` |
+| `internal/installer` | Multi-scope (`profile`, `global`, `workspace`) installer, syncer, uninstaller, status inspector, `.pcs-state.json` tracker, and `claude-pcs` profile launcher generator | `internal/installer/installer.go` |
+| `internal/registry` | Deterministic `.atl/skill-registry.md` table generator with YAML frontmatter parser and SHA-256 content hash fast path | `internal/registry/registry.go` |
+| `internal/doctor` | Ecosystem health verifier for `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation state | `internal/doctor/doctor.go` |
+| `internal/cli` | CLI command router (`install`, `sync`, `uninstall`, `status`, `doctor`, `skill-registry refresh`, `version`, `help`) | `internal/cli/cli.go` |

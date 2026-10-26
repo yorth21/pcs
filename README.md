@@ -1,6 +1,39 @@
 # Product Composition System (`pcs`)
 
-**`pcs` is an LLM-first Product & UX/UI Brain that transforms AI coding agents from impulsive component generators into disciplined Product Engineers.** Built as a specialized layer on top of `gentle-ai`, `pcs` enforces **Product-Centered Development (PCD)** across the 5 Planes of UX before a single line of `.tsx` is written.
+**`pcs` is an LLM-first Product & UX/UI Brain and standalone Go CLI that transforms AI coding agents from impulsive component generators into disciplined Product Engineers.** Built as a specialized layer on top of `gentle-ai`, `pcs` enforces **Product-Centered Development (PCD)** across the 5 Planes of UX before a single line of `.tsx` is written.
+
+---
+
+## Quick Path — Install & Launch (`pcs` CLI)
+
+Build and install the zero-dependency Go binary, deploy an isolated Product Composition profile (`~/.claude-pcs`) with `engram`, `context7`, and `codegraph` MCP servers pre-wired, and verify ecosystem health:
+
+```bash
+# 1. Build the standalone Go CLI
+make build
+
+# 2. Install into an isolated profile (~/.claude-pcs) with MCP infrastructure
+./bin/pcs install --scope profile --adapter react-shadcn --persona gentleman --with-mcp=true
+
+# 3. Verify binaries, embedded brain, markers, native subagents, and skills
+./bin/pcs doctor
+
+# 4. Launch your isolated Product Composition session
+~/.claude-pcs/bin/claude-pcs
+# or: CLAUDE_CONFIG_DIR="$HOME/.claude-pcs" claude
+```
+
+### CLI Command Reference
+
+| Command | Purpose |
+|---------|---------|
+| `pcs install [--scope profile\|global\|workspace] [--target-dir <dir>] [--adapter react-shadcn] [--persona gentleman\|neutral] [--with-mcp=true\|false] [--dry-run] [--json]` | Deploy `pcs` orchestrator markers, 5 native subagents, `pcs-core` + Stack Adapter skills, and MCP servers (`engram`, `context7`, `codegraph`) |
+| `pcs sync [--scope profile\|global\|workspace] [--target-dir <dir>] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and markers using `.pcs-state.json` |
+| `pcs status [--scope profile\|global\|workspace] [--target-dir <dir>] [--json]` | Inspect installed `CLAUDE.md` markers, native subagents, skills, and MCP configuration |
+| `pcs doctor [--target-dir <dir>] [--json]` | Run diagnostic checks on `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation |
+| `pcs skill-registry refresh [--cwd <dir>] [--skills-dir <dir>] [--json]` | Scan `SKILL.md` frontmatter and write deterministic `.atl/skill-registry.md` with SHA-256 cache-hit header |
+| `pcs uninstall [--scope profile\|global\|workspace] [--target-dir <dir>] [--dry-run] [--json]` | Cleanly remove `pcs`-owned markers, `pcs-*` native subagents, and `pcs-*` skills without touching `gentle-ai` or user files |
+| `pcs version [--json]` | Print `pcs` CLI version |
 
 ---
 
@@ -62,10 +95,22 @@ flowchart LR
 
 ```text
 pcs/
-├── README.md                          # Executive overview and quick path
-├── AGENTS.md                          # Project skill and native subagent registry
+├── README.md                          # Executive overview and CLI quick path
+├── AGENTS.md                          # Project skill, subagent, and CLI package registry
+├── Makefile                           # Build, test (-race), and vet targets
+├── go.mod                             # Zero-external-dependency Go module
+├── embed.go                           # //go:embed all:brain docs/skill-style-guide.md
+├── cmd/pcs/main.go                    # Standalone pcs CLI entrypoint
+├── internal/
+│   ├── assets/                        # Embedded BrainFS accessors and base infra blocks
+│   ├── marker/                        # Idempotent HTML-comment marker engine for CLAUDE.md
+│   ├── mcp/                           # Engram, Context7 & CodeGraph JSON merger/unmerger
+│   ├── installer/                     # Multi-scope (profile, global, workspace) lifecycle engine
+│   ├── registry/                      # Deterministic .atl/skill-registry.md generator
+│   ├── doctor/                        # Ecosystem binary, BrainFS, and installation verifier
+│   └── cli/                           # Subcommand router and flag parser
 ├── docs/
-│   ├── architecture.md                # Two-layer architecture (gentle-ai + pcs) & deployment model
+│   ├── architecture.md                # Two-layer architecture (gentle-ai + pcs) & CLI design
 │   └── skill-style-guide.md           # Normative LLM-first skill style guide
 └── brain/
     ├── orchestrator/
@@ -101,6 +146,7 @@ pcs/
 
 ## Quick Verification Checklist
 
-- [ ] Read [`docs/architecture.md`](file:///Users/yorth21/Developer/SideProjects/pcs/docs/architecture.md) for the two-layer integration with `gentle-ai` (`Engram`, `CodeGraph`, `Context7`).
+- [ ] Run `go test -v -race ./...` and `go vet ./...` to verify all CLI packages and embedded assets.
+- [ ] Read [`docs/architecture.md`](file:///Users/yorth21/Developer/SideProjects/pcs/docs/architecture.md) for the two-layer integration with `gentle-ai` (`Engram`, `CodeGraph`, `Context7`) and CLI lifecycle internals.
 - [ ] Read [`docs/skill-style-guide.md`](file:///Users/yorth21/Developer/SideProjects/pcs/docs/skill-style-guide.md) before authoring or modifying any `SKILL.md`.
-- [ ] Inspect [`AGENTS.md`](file:///Users/yorth21/Developer/SideProjects/pcs/AGENTS.md) for the authoritative index of skills, orchestrator blocks, and subagents.
+- [ ] Inspect [`AGENTS.md`](file:///Users/yorth21/Developer/SideProjects/pcs/AGENTS.md) for the authoritative index of skills, orchestrator blocks, subagents, and Go packages.

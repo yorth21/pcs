@@ -134,24 +134,55 @@ All automated `mem_save` calls inside `pcs` phases set `capture_prompt: false` (
 
 ---
 
-## 5. Deployment & Profile Isolation Model
+## 5. Deployment, CLI Lifecycle & Profile Isolation Model
 
-`pcs` is designed to coexist with a standard `gentle-ai` installation without breaking backend or general-purpose workflows.
+`pcs` ships as a standalone, zero-dependency Go CLI (`cmd/pcs`) modeled after `gentle-ai`. It embeds `brain/**` and `docs/skill-style-guide.md` directly into the binary via `//go:embed` (`embed.go`) and manages three deployment scopes (`profile`, `global`, and `workspace`) while automatically wiring `engram`, `context7`, and `codegraph` MCP servers.
 
-### Mode A: Isolated Profile (`~/.claude-pcs`) — Recommended for Dedicated Product/UI Sessions
+### Automated MCP Infrastructure Wiring (`--with-mcp=true`)
 
-1. Seed `~/.claude-pcs` from the base `gentle-ai` configuration so `Engram`, `CodeGraph`, `Context7`, and permissions are preserved.
-2. Replace `<!-- gentle-ai:orchestrator -->` and `<!-- gentle-ai:agent-routing -->` in `~/.claude-pcs/CLAUDE.md` with `<!-- pcs:orchestrator -->` (`brain/orchestrator/pcs-orchestrator.md`) and `<!-- pcs:ux-routing -->` (`brain/orchestrator/pcs-routing.md`).
-3. Symlink or copy `brain/agents/pcs-*.md` into `~/.claude-pcs/agents/`.
-4. Symlink or copy `brain/skills/pcs-core`, `brain/skills/pcs-adapter-react-shadcn`, and `brain/skills/_shared/pcs-phase-common.md` into `~/.claude-pcs/skills/`.
-5. Launch via shell alias:
+When `pcs install` runs with `--with-mcp=true` (the default), `internal/mcp` atomically merges three foundational MCP servers into `.claude.json` (or `.mcp.json` in workspace mode) and configures `settings.json` with `.bak` backups and zero data loss on existing user keys:
+
+| MCP Server | Configured Command | `settings.json` Permissions & Plugins |
+|------------|--------------------|---------------------------------------|
+| **`engram`** | `/opt/homebrew/bin/engram mcp --tools=agent` (or resolved `engram` binary on `$PATH`) | `mcp__engram__*`, `mcp__plugin_engram_engram__*`, `enabledPlugins["engram@engram"] = true` |
+| **`context7`** | `npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp` | `mcp__context7__*` |
+| **`codegraph`** | `codegraph serve --mcp` (`stdio`) | `mcp__codegraph__*` |
+
+In addition, `settings.json` receives a `UserPromptSubmit` hook (`pcs skill-registry refresh`) if a skill-registry hook is not already registered.
+
+### Mode A: Isolated Profile (`--scope profile`, `~/.claude-pcs`) — Recommended for Dedicated Product/UI Sessions
+
+```bash
+pcs install --scope profile --adapter react-shadcn --persona gentleman --with-mcp=true
+```
+
+1. Creates `~/.claude-pcs/CLAUDE.md` with `<!-- gentle-ai:codegraph-guidance -->`, `<!-- gentle-ai:persona -->`, `<!-- gentle-ai:engram-protocol -->`, `<!-- pcs:orchestrator -->`, and `<!-- pcs:ux-routing -->`.
+2. Writes all 5 native subagents (`pcs-explorer.md` .. `pcs-verifier.md`) into `~/.claude-pcs/agents/` along with `.pcs-native-agent-ownership.json`.
+3. Writes `_shared/pcs-phase-common.md`, `pcs-core`, and `pcs-adapter-react-shadcn` into `~/.claude-pcs/skills/`.
+4. Configures `~/.claude-pcs/.claude.json` and `~/.claude-pcs/settings.json` with `engram`, `context7`, and `codegraph`.
+5. Generates an executable wrapper script at `~/.claude-pcs/bin/claude-pcs`:
    ```bash
-   alias claude-pcs='CLAUDE_CONFIG_DIR="$HOME/.claude-pcs" claude'
+   ~/.claude-pcs/bin/claude-pcs
+   # Equivalent to: CLAUDE_CONFIG_DIR="$HOME/.claude-pcs" claude
    ```
 
-### Mode B: Workspace Overlay (`.claude/` or `AGENTS.md` inside a Frontend Repository)
+### Mode B: Global Overlay (`--scope global`, `~/.claude`) — Coexisting with `gentle-ai`
 
-1. Copy or symlink `brain/agents/pcs-*.md` into `<frontend-repo>/.claude/agents/`.
-2. Copy or symlink `brain/skills/*` into `<frontend-repo>/.claude/skills/`.
-3. Register `pcs-core` and `pcs-adapter-react-shadcn` in `<frontend-repo>/AGENTS.md` and `.atl/skill-registry.md`.
-4. Inject `<!-- pcs:orchestrator -->` and `<!-- pcs:ux-routing -->` into `<frontend-repo>/CLAUDE.md`.
+```bash
+pcs install --scope global --adapter react-shadcn
+```
+
+1. Preserves all existing `gentle-ai` blocks, agents (`sdd-*`), skills, and user projects in `~/.claude` and `~/.claude.json`.
+2. Upserts `<!-- pcs:orchestrator -->` and `<!-- pcs:ux-routing -->` into `~/.claude/CLAUDE.md`.
+3. Installs `pcs-*.md` agents and `pcs-*` skills alongside existing `gentle-ai` assets, tracking ownership in `.pcs-native-agent-ownership.json` and `.pcs-state.json` so `pcs uninstall --scope global` removes only `pcs`-owned artifacts.
+
+### Mode C: Workspace Overlay (`--scope workspace`, `<repo>/.claude`)
+
+```bash
+pcs install --scope workspace --target-dir /path/to/frontend-repo/.claude
+```
+
+1. Writes `pcs-*.md` agents into `<repo>/.claude/agents/` and `pcs-*` skills into `<repo>/.claude/skills/`.
+2. Upserts `<!-- pcs:orchestrator -->` and `<!-- pcs:ux-routing -->` into `<repo>/CLAUDE.md`.
+3. Runs `pcs skill-registry refresh` to generate `<repo>/.atl/skill-registry.md` with a deterministic SHA-256 content hash header.
+
