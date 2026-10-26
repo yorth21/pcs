@@ -117,7 +117,7 @@ func runInstall(args []string, env Env) int {
 		return 2
 	}
 	overrides := visitedFlags(fs)
-	chosenScope := *scope
+	chosenScope := profileDirImpliesProfile(*scope, overrides)
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
 		overrides["scope"] = true
@@ -185,6 +185,42 @@ func runSync(args []string, env Env) int {
 		chosenScope = installer.ScopeProfile
 		overrides["scope"] = true
 	}
+	if chosenScope == "" && overrides["profile-dir"] {
+		chosenScope = installer.ScopeProfile
+		overrides["scope"] = true
+	}
+	chosenProfileDir := *profileDir
+	chosenTargetDir := *targetDir
+
+	// Without any explicit target selector, sync only existing installs found via
+	// their .pcs-state.json; it never falls back to creating a global install.
+	if chosenScope == "" && !overrides["target-dir"] && strings.TrimSpace(os.Getenv("PCS_INSTALL_SCOPE")) == "" {
+		found, err := installer.DiscoverInstalls(installer.Options{HomeDir: env.HomeDir, ClaudeConfigDir: env.ClaudeConfigDir})
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "pcs sync failed: %v\n", err)
+			return 1
+		}
+		switch len(found) {
+		case 0:
+			fmt.Fprintf(env.Stderr, "pcs sync failed: no pcs installation found (checked the global target and the default profile); run 'pcs install' first, or pass --scope, --profile-dir, or --target-dir\n")
+			return 1
+		case 1:
+			chosenScope = found[0].Scope
+			overrides["scope"] = true
+			switch found[0].Scope {
+			case installer.ScopeProfile:
+				chosenProfileDir = found[0].TargetDir
+			case installer.ScopeWorkspace:
+				chosenTargetDir = found[0].TargetDir
+			}
+		default:
+			fmt.Fprintf(env.Stderr, "pcs sync failed: multiple pcs installations found; re-run with --scope (and --profile-dir for a custom profile) to choose one:\n")
+			for _, inst := range found {
+				fmt.Fprintf(env.Stderr, "  - %s: %s\n", inst.Scope, inst.TargetDir)
+			}
+			return 1
+		}
+	}
 
 	var mcpGuidancePtr *bool
 	if overrides["mcp-guidance"] {
@@ -193,8 +229,8 @@ func runSync(args []string, env Env) int {
 
 	rep, err := installer.Sync(installer.Options{
 		Scope:           chosenScope,
-		TargetDir:       *targetDir,
-		ProfileDir:      *profileDir,
+		TargetDir:       chosenTargetDir,
+		ProfileDir:      chosenProfileDir,
 		HomeDir:         env.HomeDir,
 		ClaudeConfigDir: env.ClaudeConfigDir,
 		Adapter:         *adapter,
@@ -235,7 +271,7 @@ func runUninstall(args []string, env Env) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	chosenScope := *scope
+	chosenScope := profileDirImpliesProfile(*scope, visitedFlags(fs))
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
 	}
@@ -272,7 +308,7 @@ func runStatus(args []string, env Env) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	chosenScope := *scope
+	chosenScope := profileDirImpliesProfile(*scope, visitedFlags(fs))
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
 	}
@@ -307,6 +343,16 @@ func runStatus(args []string, env Env) int {
 	return 0
 }
 
+// profileDirImpliesProfile returns the profile scope when --profile-dir was given
+// without an explicit --scope or PCS_INSTALL_SCOPE, so a profile directory is
+// never silently ignored in favor of the global target.
+func profileDirImpliesProfile(scope string, visited map[string]bool) string {
+	if visited["profile-dir"] && !visited["scope"] && strings.TrimSpace(os.Getenv("PCS_INSTALL_SCOPE")) == "" {
+		return installer.ScopeProfile
+	}
+	return scope
+}
+
 func visitedFlags(fs *flag.FlagSet) map[string]bool {
 	m := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) {
@@ -328,7 +374,7 @@ func runDoctor(args []string, env Env) int {
 		return 2
 	}
 
-	chosenScope := *scope
+	chosenScope := profileDirImpliesProfile(*scope, visitedFlags(fs))
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
 	}
@@ -579,7 +625,8 @@ Usage:
 
 Commands:
   install                  Install pcs orchestrator, 5 native subagents, skills, and optional MCP config
-  sync                     Re-sync embedded brain files and markers into an existing installation
+  sync                     Re-sync an existing installation (never creates one; without --scope it
+                           discovers existing installs and requires --scope when several exist)
   uninstall                Cleanly remove pcs-owned markers, native subagents, and skills
   status                   Inspect installed markers, native subagents, skills, and MCP servers
   doctor                   Run diagnostic checks on MCP binaries, embedded brain, and target dir
@@ -590,7 +637,7 @@ Commands:
 
 Key Flags (install / sync / uninstall / status):
   --scope global|workspace|profile   Target deployment mode (default: global -> ~/.claude or $CLAUDE_CONFIG_DIR; env: PCS_INSTALL_SCOPE)
-  --profile-dir <dir>                Custom profile directory when using --scope profile
+  --profile-dir <dir>                Profile directory (default: ~/.claude-pcs; implies --scope profile; ignores $CLAUDE_CONFIG_DIR)
   --target-dir <dir>                 Override target configuration directory
   --adapter <name>                   Frontend stack adapter (default: react-shadcn)
   --persona gentleman|neutral        Coordinator persona variant (default: gentleman)

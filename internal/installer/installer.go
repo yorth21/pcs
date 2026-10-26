@@ -2,7 +2,9 @@ package installer
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +31,16 @@ const (
 	StateFileName          = ".pcs-state.json"
 	AgentOwnershipFileName = ".pcs-native-agent-ownership.json"
 )
+
+// ErrNotInstalled reports that the resolved target has no .pcs-state.json, so
+// commands that only operate on existing installations (sync) must refuse.
+var ErrNotInstalled = errors.New("no pcs installation found")
+
+// Installation identifies an existing pcs install discovered via its state file.
+type Installation struct {
+	Scope     string `json:"scope"`
+	TargetDir string `json:"target_dir"`
+}
 
 // BoolPtr returns a pointer to b for configuring optional boolean flags.
 func BoolPtr(b bool) *bool {
@@ -239,10 +251,10 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 	if targetDir == "" {
 		switch scope {
 		case ScopeProfile:
+			// Profile scope deliberately ignores CLAUDE_CONFIG_DIR: only
+			// --profile-dir (or --target-dir) may select the profile target.
 			if profileDir != "" {
 				targetDir = profileDir
-			} else if claudeConfigDir != "" {
-				targetDir = claudeConfigDir
 			} else {
 				targetDir = filepath.Join(absHome, ".claude-pcs")
 			}
@@ -277,6 +289,9 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 
 	switch scope {
 	case ScopeProfile:
+		if err := guardProfileTarget(absTarget, absHome, claudeConfigDir); err != nil {
+			return nil, err
+		}
 		layout.claudeMDPath = filepath.Join(absTarget, "CLAUDE.md")
 		layout.claudeJSONPath = filepath.Join(absTarget, ".claude.json")
 		layout.launcherPath = filepath.Join(absTarget, "bin", "claude-pcs")
@@ -330,6 +345,94 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 	return layout, nil
 }
 
+// guardProfileTarget refuses a profile target that resolves to the main Claude
+// configuration directory (~/.claude, or $CLAUDE_CONFIG_DIR when set). The
+// CLAUDE_CONFIG_DIR check is skipped when that directory already holds a pcs
+// profile install, which is the case inside a claude-pcs launcher session.
+func guardProfileTarget(absTarget, absHome, claudeConfigDir string) error {
+	mainDir := filepath.Join(absHome, ".claude")
+	if samePath(absTarget, mainDir) {
+		return fmt.Errorf("refusing profile target %s: it is the main Claude config directory; choose another --profile-dir", absTarget)
+	}
+	if claudeConfigDir == "" {
+		return nil
+	}
+	absConfig, err := filepath.Abs(claudeConfigDir)
+	if err != nil {
+		absConfig = claudeConfigDir
+	}
+	if !samePath(absTarget, absConfig) {
+		return nil
+	}
+	if saved, err := readState(filepath.Join(absTarget, StateFileName)); err == nil && saved.Scope == ScopeProfile {
+		return nil
+	}
+	return fmt.Errorf("refusing profile target %s: it is the main Claude config directory ($CLAUDE_CONFIG_DIR); choose another --profile-dir", absTarget)
+}
+
+// samePath reports whether a and b name the same location after making them
+// absolute, cleaning them, and resolving symlinks of their longest existing
+// ancestor. Comparison is case-insensitive on Windows.
+func samePath(a, b string) bool {
+	ra, rb := canonicalPath(a), canonicalPath(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(ra, rb)
+	}
+	return ra == rb
+}
+
+func canonicalPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = filepath.Clean(p)
+	}
+	rest := ""
+	cur := abs
+	for {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
+}
+
+// DiscoverInstalls returns the existing pcs installs among the global target
+// (~/.claude or $CLAUDE_CONFIG_DIR) and the default profile (~/.claude-pcs),
+// identified by their .pcs-state.json. Duplicate paths are reported once, and
+// each install carries the scope recorded in its state file.
+func DiscoverInstalls(opts Options) ([]Installation, error) {
+	var found []Installation
+	for _, scope := range []string{ScopeGlobal, ScopeProfile} {
+		layout, err := resolveLayout(Options{Scope: scope, HomeDir: opts.HomeDir, ClaudeConfigDir: opts.ClaudeConfigDir})
+		if err != nil {
+			// A refused candidate (e.g. profile equal to the main dir) is not an install.
+			continue
+		}
+		statePath := filepath.Join(layout.targetDir, StateFileName)
+		saved, err := readState(statePath)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("read %s: %w", statePath, err)
+		}
+		if slices.ContainsFunc(found, func(i Installation) bool { return samePath(i.TargetDir, layout.targetDir) }) {
+			continue
+		}
+		recordedScope := saved.Scope
+		if recordedScope == "" {
+			recordedScope = scope
+		}
+		found = append(found, Installation{Scope: recordedScope, TargetDir: layout.targetDir})
+	}
+	return found, nil
+}
+
 // Install deploys the pcs orchestrator blocks, native subagents, core & adapter
 // skills, and optional MCP configuration into the target scope.
 func Install(opts Options) (*Report, error) {
@@ -337,42 +440,52 @@ func Install(opts Options) (*Report, error) {
 	return applyInstall(opts, "install")
 }
 
-// Sync re-reads .pcs-state.json (when present), merges any explicit CLI flag
-// overrides, and refreshes all embedded brain files, CLAUDE.md markers, MCP
-// wiring, and skill registries.
+// Sync re-reads .pcs-state.json, merges any explicit CLI flag overrides, and
+// refreshes all embedded brain files, CLAUDE.md markers, MCP wiring, and skill
+// registries. It never creates a new installation: when the resolved target has
+// no .pcs-state.json it returns an error wrapping ErrNotInstalled.
 func Sync(opts Options) (*Report, error) {
 	layout, err := resolveLayout(opts)
 	if err != nil {
 		return nil, err
 	}
 	statePath := filepath.Join(layout.targetDir, StateFileName)
-	if saved, err := readState(statePath); err == nil && saved != nil {
-		if !opts.FlagOverrides["scope"] && opts.Scope == "" {
-			opts.Scope = saved.Scope
+	saved, err := readState(statePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w at %s (missing %s); run 'pcs install' first", ErrNotInstalled, layout.targetDir, StateFileName)
 		}
-		if !opts.FlagOverrides["adapter"] && opts.Adapter == "" {
-			opts.Adapter = saved.Adapter
+		return nil, fmt.Errorf("read %s: %w", statePath, err)
+	}
+	if !opts.FlagOverrides["scope"] && opts.Scope == "" && saved.Scope != "" {
+		opts.Scope = saved.Scope
+		if saved.Scope != layout.scope && opts.TargetDir == "" {
+			// Keep syncing the directory whose state file was read.
+			opts.TargetDir = layout.targetDir
 		}
-		if !opts.FlagOverrides["persona"] && opts.Persona == "" {
-			opts.Persona = saved.Persona
+	}
+	if !opts.FlagOverrides["adapter"] && opts.Adapter == "" {
+		opts.Adapter = saved.Adapter
+	}
+	if !opts.FlagOverrides["persona"] && opts.Persona == "" {
+		opts.Persona = saved.Persona
+	}
+	if !opts.FlagOverrides["with-mcp"] {
+		if !opts.FlagOverrides["mcp-guidance"] && opts.MCPGuidance == nil {
+			opts.MCPGuidance = BoolPtr(saved.MCPGuidance)
 		}
-		if !opts.FlagOverrides["with-mcp"] {
-			if !opts.FlagOverrides["mcp-guidance"] && opts.MCPGuidance == nil {
-				opts.MCPGuidance = BoolPtr(saved.MCPGuidance)
-			}
-			if !opts.FlagOverrides["write-mcp-config"] {
-				opts.WriteMCPConfig = saved.WriteMCPConfig
-			}
-			if !opts.FlagOverrides["write-hook"] {
-				opts.WriteHook = saved.WriteHook
-			}
+		if !opts.FlagOverrides["write-mcp-config"] {
+			opts.WriteMCPConfig = saved.WriteMCPConfig
 		}
-		if !opts.FlagOverrides["launcher-dir"] && opts.LauncherDir == "" {
-			opts.LauncherDir = saved.LauncherDir
+		if !opts.FlagOverrides["write-hook"] {
+			opts.WriteHook = saved.WriteHook
 		}
-		if !opts.FlagOverrides["launcher-args"] && opts.LauncherArgs == "" {
-			opts.LauncherArgs = saved.LauncherArgs
-		}
+	}
+	if !opts.FlagOverrides["launcher-dir"] && opts.LauncherDir == "" {
+		opts.LauncherDir = saved.LauncherDir
+	}
+	if !opts.FlagOverrides["launcher-args"] && opts.LauncherArgs == "" {
+		opts.LauncherArgs = saved.LauncherArgs
 	}
 	normalizeOptions(&opts)
 	return applyInstall(opts, "sync")
@@ -919,8 +1032,6 @@ func Uninstall(opts Options) (*Report, error) {
 		delta.AddedPermissions = slices.Clone(savedState.AddedPermissions)
 		delta.AddedPlugins = slices.Clone(savedState.AddedPlugins)
 		delta.AddedHook = savedState.AddedHook
-	} else if layout.scope == ScopeProfile {
-		delta.ForceRemoveAllMCP = true
 	}
 	if !opts.DryRun {
 		_ = mcp.UnmergeWithDelta(layout.claudeJSONPath, layout.settingsJSONPath, delta)
@@ -982,6 +1093,10 @@ func Uninstall(opts Options) (*Report, error) {
 			for _, name := range []string{"claude-pcs", "claude-pcs.cmd", "claude-pcs.ps1"} {
 				lp := filepath.Join(tDir, name)
 				if _, err := os.Stat(lp); err == nil {
+					if savedState == nil && !isPCSLauncher(lp) {
+						// Without a state record, only remove files that carry the pcs launcher signature.
+						continue
+					}
 					if !opts.DryRun {
 						_ = os.Remove(lp)
 					}
@@ -1084,6 +1199,17 @@ func Status(opts Options) (*StatusReport, error) {
 		allSkillsPresent
 
 	return rep, nil
+}
+
+// isPCSLauncher reports whether the file at path looks like a launcher generated
+// by pcs (it scopes CLAUDE_CONFIG_DIR and passes the profile shared-mcp.json).
+func isPCSLauncher(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	content := string(b)
+	return strings.Contains(content, "CLAUDE_CONFIG_DIR") && strings.Contains(content, "shared-mcp.json")
 }
 
 func readState(path string) (*State, error) {

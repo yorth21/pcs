@@ -609,4 +609,3 @@ func RemoveStatusLine(targetSettingsJSONPath string) error {
 	delete(targetRoot, "statusLine")
 	return writeJSONAtomicWithPerm(targetSettingsJSONPath, targetRoot, perm)
 }
-

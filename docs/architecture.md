@@ -144,7 +144,8 @@ All automated `mem_save` calls inside `pcs` phases set `capture_prompt: false` (
 2. `PCS_INSTALL_SCOPE` environment variable fallback.
 3. Default scope: **`global`**.
    - When `scope == "global"` and `--target-dir` is omitted: if `CLAUDE_CONFIG_DIR` is set in the environment, `pcs` targets `$CLAUDE_CONFIG_DIR` (writing MCP servers to `$CLAUDE_CONFIG_DIR/.claude.json`); otherwise it targets `$HOME/.claude` (writing MCP servers to `$HOME/.claude.json`).
-   - When `scope == "profile"` and `--target-dir` is omitted: `pcs` checks `--profile-dir`, then `$CLAUDE_CONFIG_DIR`, and defaults to `$HOME/.claude-pcs`.
+   - When `scope == "profile"` and `--target-dir` is omitted: `pcs` uses `--profile-dir` and defaults to `$HOME/.claude-pcs`. Profile scope ignores `$CLAUDE_CONFIG_DIR` and refuses any profile target that resolves (after `Abs`/`Clean`/symlink resolution, case-insensitively on Windows) to `$HOME/.claude` or to `$CLAUDE_CONFIG_DIR`, unless that directory already holds a pcs profile install (as inside a `claude-pcs` session).
+   - `pcs sync` never creates a new install: it refuses when the resolved target has no `.pcs-state.json`. Without an explicit selector (`--scope`, `--profile`, `--profile-dir`, `--target-dir`, or `PCS_INSTALL_SCOPE`), it discovers installs in the global target and the default profile, syncs the only one found, and requires `--scope` when several exist.
 
 ### Granular Prompt Guidance, MCP Config, and Hook Wiring
 
@@ -192,7 +193,7 @@ pcs install --scope workspace --target-dir /path/to/frontend-repo/.claude
 pcs install --scope profile --profile-dir ~/.claude-pcs --adapter react-shadcn --persona gentleman
 ```
 
-1. Creates `~/.claude-pcs` (or `--profile-dir` / `$CLAUDE_CONFIG_DIR`) with `CLAUDE.md`, `agents/pcs-*.md`, `skills/{_shared,pcs-core,pcs-adapter-react-shadcn}`, and optional `.claude.json` / `settings.json`.
+1. Creates `~/.claude-pcs` (or `--profile-dir`) with `CLAUDE.md`, `agents/pcs-*.md`, `skills/{_shared,pcs-core,pcs-adapter-react-shadcn}`, and optional `.claude.json` / `settings.json`.
 2. Generates cross-platform, process-scoped launchers in `<profile-dir>/bin/` and automatically installs them into the user's bin directory on `PATH` (`~/.local/bin` on Unix/macOS, `%LOCALAPPDATA%\pcs\bin` on Windows, or `--launcher-dir <dir>`):
    - `claude-pcs` (POSIX shell script using `exec env CLAUDE_CONFIG_DIR=... claude --mcp-config ... "$@"`)
    - `claude-pcs.cmd` (Windows Command Prompt batch script using `setlocal` / `endlocal` to prevent environment variable leakage)

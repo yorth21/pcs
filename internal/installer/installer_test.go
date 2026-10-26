@@ -483,11 +483,11 @@ func TestDefaultGlobalScopeAndEnvironmentFallbacks(t *testing.T) {
 			wantClaudeJSONIn: "target",
 		},
 		{
-			name:               "uses CLAUDE_CONFIG_DIR when scope is profile and profile-dir/target-dir are empty",
+			name:               "ignores CLAUDE_CONFIG_DIR when scope is profile and profile-dir/target-dir are empty",
 			envInstallScope:    ScopeProfile,
 			envClaudeConfigDir: "env-profile-dir",
 			wantScope:          ScopeProfile,
-			wantTargetSuffix:   "env-profile-dir",
+			wantTargetSuffix:   ".claude-pcs",
 			wantClaudeJSONIn:   "target",
 		},
 	}

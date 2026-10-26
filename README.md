@@ -6,7 +6,7 @@
 
 ## Quick Path — Install & Launch (`pcs` CLI)
 
-Build the zero-dependency Go binary and install `pcs` (`--scope global` by default, respecting `$CLAUDE_CONFIG_DIR` and `$PCS_INSTALL_SCOPE`, `--scope workspace` for repository-level installation, or `--scope profile` for a dedicated `~/.claude-pcs` profile with POSIX/Windows launchers):
+Build the zero-dependency Go binary and install `pcs` (`--scope global` by default, respecting `$CLAUDE_CONFIG_DIR` and `$PCS_INSTALL_SCOPE`, `--scope workspace` for repository-level installation, or `--scope profile` for a dedicated `~/.claude-pcs` profile with POSIX/Windows launchers; profile scope ignores `$CLAUDE_CONFIG_DIR`, is selected only by `--profile-dir`, and refuses to target the main config directory):
 
 ```bash
 # 1. Build the standalone Go CLI
@@ -34,7 +34,7 @@ make build
 | Command | Purpose |
 |---------|---------|
 | `pcs install [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--launcher-dir <dir>] [--launcher-args <args>] [--with-plugins] [--no-statusline] [--adapter react-shadcn] [--persona gentleman\|neutral] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Deploy `pcs` orchestrator & infrastructure markers (`pcs:*`), 5 native subagents, and `pcs-core` + Stack Adapter skills. In profile scope, installs `claude-pcs` launchers on PATH, isolates environment, generates `shared-mcp.json`, and inherits status line |
-| `pcs sync [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--launcher-dir <dir>] [--launcher-args <args>] [--with-plugins] [--no-statusline] [--adapter <name>] [--persona <name>] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and `pcs:*` markers using `.pcs-state.json` while honoring any explicit flag overrides |
+| `pcs sync [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--launcher-dir <dir>] [--launcher-args <args>] [--with-plugins] [--no-statusline] [--adapter <name>] [--persona <name>] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and `pcs:*` markers using `.pcs-state.json` while honoring any explicit flag overrides. `sync` never creates an install: it exits non-zero when the target has no `.pcs-state.json`. Without `--scope`/`--profile-dir`/`--target-dir` (and no `PCS_INSTALL_SCOPE`), it discovers existing installs (global target and default `~/.claude-pcs` profile) and syncs the single one found; when several exist it lists them and requires `--scope` |
 | `pcs status [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--json]` | Inspect installed `CLAUDE.md` markers (`pcs:*`), native subagents, skills, and MCP configuration |
 | `pcs doctor [--scope global\|workspace\|profile] [--profile <name>] [--profile-dir <dir>] [--target-dir <dir>] [--json]` | Run diagnostic checks on `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation (including profile authentication and PATH status) |
 | `pcs skill-registry refresh [--cwd <dir>] [--skills-dir <dir>] [--json]` | Scan `SKILL.md` frontmatter and write deterministic `.atl/pcs-skill-registry.md` with SHA-256 cache-hit header |
