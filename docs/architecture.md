@@ -195,9 +195,11 @@ pcs install --scope profile --profile-dir ~/.claude-pcs --adapter react-shadcn -
 
 1. Creates `~/.claude-pcs` (or `--profile-dir`) with `CLAUDE.md`, `agents/pcs-*.md`, `skills/{_shared,pcs-core,pcs-adapter-react-shadcn}`, and optional `.claude.json` / `settings.json`.
 2. Generates cross-platform, process-scoped launchers in `<profile-dir>/bin/` and automatically installs them into the user's bin directory on `PATH` (`~/.local/bin` on Unix/macOS, `%LOCALAPPDATA%\pcs\bin` on Windows, or `--launcher-dir <dir>`):
-   - `claude-pcs` (POSIX shell script using `exec env CLAUDE_CONFIG_DIR=... claude --mcp-config ... "$@"`)
-   - `claude-pcs.cmd` (Windows Command Prompt batch script using `setlocal` / `endlocal` to prevent environment variable leakage)
-   - `claude-pcs.ps1` (Windows PowerShell script using `try { ... } finally { $env:CLAUDE_CONFIG_DIR = $prev }` with single-quoted path escaping)
+   - `claude-pcs` (POSIX shell script using `exec env CLAUDE_CONFIG_DIR='...' 'claude' <launcher-args> "$@" --mcp-config '...'`, every value single-quoted)
+   - `claude-pcs.cmd` (Windows Command Prompt batch script using `setlocal DisableDelayedExpansion` / `endlocal` to prevent environment variable leakage, every value double-quoted with `%` doubled)
+   - `claude-pcs.ps1` (Windows PowerShell script using `try { ... } finally { $env:CLAUDE_CONFIG_DIR = $prev }`, every value single-quoted)
+
+   User arguments always precede `--mcp-config <profile-dir>/shared-mcp.json`, which comes last with a single value because Claude Code parses `--mcp-config` as a variadic option. `--launcher-args` is split into individual arguments (unquoted whitespace separates words; single or double quotes group words; backslashes and shell metacharacters such as `$`, backtick, `%`, and `^` are literal; an unterminated quote is an error) and each argument is quoted for each launcher syntax, so it reaches `claude` exactly as written.
 3. Reuses main profile MCP servers without touching `~/.claude.json`: reads `~/.claude.json` and writes `<profile-dir>/shared-mcp.json` with restricted permissions (0600), passing `--mcp-config <profile-dir>/shared-mcp.json` directly in the launcher.
 4. Inherits custom `statusLine` from `~/.claude/settings.json` automatically (unless `--no-statusline` is specified) and supports plugin migration with `--with-plugins` or external plugin managers like `herdr` (`herdr integration install claude`).
 5. Guides the user to run `claude-pcs` followed by `/login` for first-run profile authentication. `pcs doctor --scope profile` validates launcher presence on `PATH`, `shared-mcp.json` integrity, and `.credentials.json` presence without reading secret content.

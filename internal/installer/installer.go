@@ -551,6 +551,11 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		return nil, err
 	}
 
+	launcherArgList, err := SplitLauncherArgs(opts.LauncherArgs)
+	if err != nil {
+		return nil, err
+	}
+
 	layout, err := resolveLayout(opts)
 	if err != nil {
 		return nil, err
@@ -800,25 +805,7 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 			_ = cmd.Run()
 		}
 
-		launcherArgsStr := strings.TrimSpace(opts.LauncherArgs)
-		launcherArgsWithSpace := ""
-		if launcherArgsStr != "" {
-			launcherArgsWithSpace = launcherArgsStr + " "
-		}
-
-		// POSIX launcher: process-scoped via exec env so variables never leak into calling shell
-		posixScript := fmt.Sprintf("#!/usr/bin/env sh\nexec env CLAUDE_CONFIG_DIR=%q claude --mcp-config %q %s\"$@\"\n",
-			layout.targetDir, layout.sharedMCPPath, launcherArgsWithSpace)
-
-		// Windows CMD: scoped via setlocal/endlocal so variables never leak into calling shell
-		cmdScript := fmt.Sprintf("@echo off\r\nsetlocal\r\nset \"CLAUDE_CONFIG_DIR=%s\"\r\nclaude --mcp-config \"%%CLAUDE_CONFIG_DIR%%\\shared-mcp.json\" %s%%*\r\nendlocal\r\n",
-			layout.targetDir, launcherArgsWithSpace)
-
-		// Windows PowerShell: saves and restores $env:CLAUDE_CONFIG_DIR in finally block
-		escapedTargetForPS := strings.ReplaceAll(layout.targetDir, "'", "''")
-		escapedSharedMCPForPS := strings.ReplaceAll(layout.sharedMCPPath, "'", "''")
-		ps1Script := fmt.Sprintf("$prev = $env:CLAUDE_CONFIG_DIR\ntry {\n    $env:CLAUDE_CONFIG_DIR = '%s'\n    & claude --mcp-config '%s' %s@args\n} finally {\n    $env:CLAUDE_CONFIG_DIR = $prev\n}\n",
-			escapedTargetForPS, escapedSharedMCPForPS, launcherArgsWithSpace)
+		scripts := renderLaunchers(layout.targetDir, layout.sharedMCPPath, launcherArgList)
 
 		launcherDirs := []string{filepath.Dir(layout.launcherPath)}
 		if layout.userBinDir != "" && filepath.Clean(layout.userBinDir) != filepath.Clean(filepath.Dir(layout.launcherPath)) {
@@ -830,13 +817,13 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 			cmdFile := filepath.Join(lDir, "claude-pcs.cmd")
 			ps1File := filepath.Join(lDir, "claude-pcs.ps1")
 			if !opts.DryRun {
-				if err := writeFileCreatingDirs(shFile, []byte(posixScript), 0o755); err != nil {
+				if err := writeFileCreatingDirs(shFile, []byte(scripts.posix), 0o755); err != nil {
 					return nil, err
 				}
-				if err := writeFileCreatingDirs(cmdFile, []byte(cmdScript), 0o644); err != nil {
+				if err := writeFileCreatingDirs(cmdFile, []byte(scripts.cmd), 0o644); err != nil {
 					return nil, err
 				}
-				if err := writeFileCreatingDirs(ps1File, []byte(ps1Script), 0o644); err != nil {
+				if err := writeFileCreatingDirs(ps1File, []byte(scripts.powerShell), 0o644); err != nil {
 					return nil, err
 				}
 			}
@@ -849,9 +836,9 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		report.LauncherOnPath = isDirOnPath(layout.userBinDir)
 
 		if runtime.GOOS == "windows" {
-			report.LauncherCmd = fmt.Sprintf("$env:CLAUDE_CONFIG_DIR='%s'; claude --mcp-config '%s'", escapedTargetForPS, escapedSharedMCPForPS)
+			report.LauncherCmd = fmt.Sprintf("$env:CLAUDE_CONFIG_DIR=%s; claude --mcp-config %s", powerShellQuote(layout.targetDir), powerShellQuote(layout.sharedMCPPath))
 		} else {
-			report.LauncherCmd = fmt.Sprintf("CLAUDE_CONFIG_DIR=%q claude --mcp-config %q", layout.targetDir, layout.sharedMCPPath)
+			report.LauncherCmd = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s claude --mcp-config %s", posixQuote(layout.targetDir), posixQuote(layout.sharedMCPPath))
 		}
 
 		report.NextSteps = append(report.NextSteps,
