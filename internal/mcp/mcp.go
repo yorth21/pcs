@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -647,4 +648,48 @@ func StatusLineSHA256(settingsJSONPath string) (string, bool, error) {
 	}
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:]), true, nil
+}
+
+// PluginEnabled reports whether enabledPlugins[plugin] is true in settingsJSONPath.
+// A missing file or key reports false.
+func PluginEnabled(settingsJSONPath, plugin string) (bool, error) {
+	if _, err := os.Stat(settingsJSONPath); os.IsNotExist(err) {
+		return false, nil
+	}
+	root, _, _, _, err := readJSONObjectWithPerm(settingsJSONPath, 0o644)
+	if err != nil {
+		return false, err
+	}
+	plugins, _ := root["enabledPlugins"].(map[string]any)
+	enabled, _ := plugins[plugin].(bool)
+	return enabled, nil
+}
+
+// SharedMCPDrift compares the mcpServers in sharedMCPPath with the main
+// profile's mcpServers and returns the sorted names of servers that are
+// missing, extra, or different. It returns nil when they match, or when the main
+// profile defines no servers (shared-mcp.json then holds the pcs defaults).
+func SharedMCPDrift(sharedMCPPath, mainClaudeJSONPath string) ([]string, error) {
+	mainServers, found, err := ReadMainProfileMCPServers(mainClaudeJSONPath)
+	if err != nil || !found {
+		return nil, err
+	}
+	root, _, _, _, err := readJSONObjectWithPerm(sharedMCPPath, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	shared, _ := root["mcpServers"].(map[string]any)
+	var drift []string
+	for name, def := range mainServers {
+		if got, ok := shared[name]; !ok || !reflect.DeepEqual(got, def) {
+			drift = append(drift, name)
+		}
+	}
+	for name := range shared {
+		if _, ok := mainServers[name]; !ok {
+			drift = append(drift, name)
+		}
+	}
+	slices.Sort(drift)
+	return drift, nil
 }

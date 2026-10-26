@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -152,18 +151,21 @@ type Report struct {
 
 // StatusReport summarizes the health and installed state of a target directory.
 type StatusReport struct {
-	Installed        bool            `json:"installed"`
-	Scope            string          `json:"scope"`
-	TargetDir        string          `json:"target_dir"`
-	ClaudeMDPath     string          `json:"claude_md_path"`
-	ClaudeJSONPath   string          `json:"claude_json_path"`
-	SettingsJSONPath string          `json:"settings_json_path"`
-	SharedMCPPath    string          `json:"shared_mcp_path,omitempty"`
-	State            *State          `json:"state,omitempty"`
-	Markers          map[string]bool `json:"markers"`
-	Agents           map[string]bool `json:"agents"`
-	Skills           map[string]bool `json:"skills"`
-	MCPServers       map[string]bool `json:"mcp_servers"`
+	Installed        bool   `json:"installed"`
+	Scope            string `json:"scope"`
+	TargetDir        string `json:"target_dir"`
+	ClaudeMDPath     string `json:"claude_md_path"`
+	ClaudeJSONPath   string `json:"claude_json_path"`
+	SettingsJSONPath string `json:"settings_json_path"`
+	SharedMCPPath    string `json:"shared_mcp_path,omitempty"`
+	// MainClaudeJSONPath is the main profile .claude.json that profile scope
+	// mirrors into shared-mcp.json.
+	MainClaudeJSONPath string          `json:"main_claude_json_path,omitempty"`
+	State              *State          `json:"state,omitempty"`
+	Markers            map[string]bool `json:"markers"`
+	Agents             map[string]bool `json:"agents"`
+	Skills             map[string]bool `json:"skills"`
+	MCPServers         map[string]bool `json:"mcp_servers"`
 }
 
 type resolvedLayout struct {
@@ -819,10 +821,15 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 			}
 		}
 
-		if opts.WithPlugins && !opts.DryRun {
-			cmd := exec.Command("claude", "plugin", "install", "engram@engram")
-			cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+layout.targetDir)
-			_ = cmd.Run()
+		if opts.WithPlugins {
+			detail := "claude plugin marketplace add " + EngramMarketplaceSource + "; claude plugin install " + EngramPlugin
+			if opts.DryRun {
+				detail += " (dry-run)"
+			} else if failures := installRequiredPlugins(runtime.GOOS, layout.targetDir); len(failures) > 0 {
+				detail += " (failed; see warnings)"
+				report.Warnings = append(report.Warnings, failures...)
+			}
+			report.Actions = append(report.Actions, Action{Operation: "install-plugins", Path: layout.targetDir, Detail: detail})
 		}
 
 		scripts := renderLaunchers(layout.targetDir, layout.sharedMCPPath, launcherArgList)
@@ -855,27 +862,9 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		report.LauncherDir = layout.userBinDir
 		report.LauncherOnPath = isDirOnPath(layout.userBinDir)
 
-		if runtime.GOOS == "windows" {
-			report.LauncherCmd = fmt.Sprintf("$env:CLAUDE_CONFIG_DIR=%s; claude --mcp-config %s", powerShellQuote(layout.targetDir), powerShellQuote(layout.sharedMCPPath))
-		} else {
-			report.LauncherCmd = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s claude --mcp-config %s", posixQuote(layout.targetDir), posixQuote(layout.sharedMCPPath))
-		}
-
+		report.LauncherCmd = launcherCommand(runtime.GOOS, layout.targetDir, layout.sharedMCPPath)
 		report.NextSteps = append(report.NextSteps,
-			"Profile ready! Run 'claude-pcs' and type '/login' to authenticate this profile.",
-			fmt.Sprintf("To install plugins into this profile: CLAUDE_CONFIG_DIR=%q claude plugin install engram@engram", layout.targetDir),
-		)
-		if !report.LauncherOnPath {
-			if runtime.GOOS == "windows" {
-				report.NextSteps = append(report.NextSteps,
-					fmt.Sprintf("Add launcher dir to PATH: setx PATH \"%%PATH%%;%s\"", layout.userBinDir),
-				)
-			} else {
-				report.NextSteps = append(report.NextSteps,
-					fmt.Sprintf("Add launcher dir to PATH: export PATH=%q:\"$PATH\"", layout.userBinDir),
-				)
-			}
-		}
+			profileNextSteps(runtime.GOOS, layout.targetDir, layout.userBinDir, report.LauncherOnPath, opts.WithPlugins)...)
 	}
 
 	// 6. In workspace scope, refresh <workspace>/.atl/pcs-skill-registry.md immediately.
@@ -1213,11 +1202,13 @@ func Status(opts Options) (*StatusReport, error) {
 	}
 
 	rep := &StatusReport{
-		Scope:            layout.scope,
-		TargetDir:        layout.targetDir,
-		ClaudeMDPath:     layout.claudeMDPath,
-		ClaudeJSONPath:   layout.claudeJSONPath,
-		SettingsJSONPath: layout.settingsJSONPath,
+		Scope:              layout.scope,
+		TargetDir:          layout.targetDir,
+		ClaudeMDPath:       layout.claudeMDPath,
+		ClaudeJSONPath:     layout.claudeJSONPath,
+		SettingsJSONPath:   layout.settingsJSONPath,
+		SharedMCPPath:      layout.sharedMCPPath,
+		MainClaudeJSONPath: layout.mainClaudeJSONPath,
 		Markers: map[string]bool{
 			assets.MarkerCodeGraphGuidance: false,
 			assets.MarkerPersona:           false,

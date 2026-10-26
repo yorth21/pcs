@@ -109,8 +109,8 @@ func runInstall(args []string, env Env) int {
 	withMCP := fs.Bool("with-mcp", false, "Convenience alias for --mcp-guidance=true --write-mcp-config=true --write-hook=true")
 	launcherDir := fs.String("launcher-dir", "", "Custom launcher installation directory (default: ~/.local/bin or %LOCALAPPDATA%\\pcs\\bin)")
 	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into the claude-pcs launchers: split on whitespace, single or double quotes group words, no escape character; every value is passed literally")
-	withPlugins := fs.Bool("with-plugins", false, "Install required plugins into profile via claude plugin install")
-	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json")
+	withPlugins := fs.Bool("with-plugins", false, "Add the engram marketplace and install the engram@engram plugin into the profile via the claude CLI (remembered by sync)")
+	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json (remembered by sync)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned actions without writing files")
 	asJSON := fs.Bool("json", false, "Output installation report as JSON")
 
@@ -147,6 +147,7 @@ func runInstall(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "pcs install failed: %v\n", err)
 		return 1
 	}
+	printWarnings(env.Stderr, rep)
 	if *asJSON {
 		return writeJSONOutput(env.Stdout, rep)
 	}
@@ -169,8 +170,8 @@ func runSync(args []string, env Env) int {
 	withMCP := fs.Bool("with-mcp", false, "Convenience alias for --mcp-guidance=true --write-mcp-config=true --write-hook=true")
 	launcherDir := fs.String("launcher-dir", "", "Custom launcher installation directory")
 	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into the claude-pcs launchers: split on whitespace, single or double quotes group words, no escape character; every value is passed literally")
-	withPlugins := fs.Bool("with-plugins", false, "Install required plugins into profile via claude plugin install")
-	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json")
+	withPlugins := fs.Bool("with-plugins", false, "Add the engram marketplace and install the engram@engram plugin into the profile via the claude CLI (remembered by sync)")
+	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json (remembered by sync)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned sync actions without writing files")
 	asJSON := fs.Bool("json", false, "Output sync report as JSON")
 
@@ -251,6 +252,7 @@ func runSync(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "pcs sync failed: %v\n", err)
 		return 1
 	}
+	printWarnings(env.Stderr, rep)
 	if *asJSON {
 		return writeJSONOutput(env.Stdout, rep)
 	}
@@ -292,9 +294,7 @@ func runUninstall(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "pcs uninstall failed: %v\n", err)
 		return 1
 	}
-	for _, w := range rep.Warnings {
-		fmt.Fprintf(env.Stderr, "warning: %s\n", w)
-	}
+	printWarnings(env.Stderr, rep)
 	if *asJSON {
 		return writeJSONOutput(env.Stdout, rep)
 	}
@@ -618,6 +618,14 @@ func printReport(w io.Writer, rep *installer.Report) {
 		for _, s := range rep.NextSteps {
 			fmt.Fprintf(w, "  • %s\n", s)
 		}
+	}
+}
+
+// printWarnings writes every report warning to w (stderr), so they stay visible
+// even when stdout carries --json output.
+func printWarnings(w io.Writer, rep *installer.Report) {
+	for _, warning := range rep.Warnings {
+		fmt.Fprintf(w, "warning: %s\n", warning)
 	}
 }
 

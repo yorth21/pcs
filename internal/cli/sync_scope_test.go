@@ -231,3 +231,18 @@ func TestUninstallRemoveMCPWithoutStateRequiresForce(t *testing.T) {
 		t.Errorf("expected forced removal of engram, got:\n%s", b)
 	}
 }
+
+func TestInstallWithPluginsReportsPluginFailures(t *testing.T) {
+	home := isolateCLIEnv(t)
+	// PATH is an empty directory, so the claude CLI cannot be found and both
+	// plugin steps fail without ever invoking a real claude.
+	code, _, stderr := runCLI(t, home, "install", "--scope", "profile", "--launcher-dir", filepath.Join(home, "bin"), "--with-plugins")
+	if code != 0 {
+		t.Fatalf("install --with-plugins exit %d: %s", code, stderr)
+	}
+	for _, want := range []string{"warning:", "claude plugin marketplace add Gentleman-Programming/engram", "claude plugin install engram@engram", "run it manually"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
