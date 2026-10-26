@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -202,4 +203,91 @@ func TestCLIDefaultGlobalScopeAndEnvOverrides(t *testing.T) {
 			t.Errorf("expected scope=profile from PCS_INSTALL_SCOPE, got %v", rep["scope"])
 		}
 	})
+}
+
+func TestCLICodeGraphInit(t *testing.T) {
+	fakeHome := t.TempDir()
+	validRepo := filepath.Join(fakeHome, "projects", "frontend-app")
+	if err := filepath.WalkDir(fakeHome, func(string, os.DirEntry, error) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(validRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name         string
+		args         []string
+		wantExitCode int
+		wantStderr   string
+		wantStdout   string
+	}{
+		{
+			name:         "succeeds on valid project root and invokes codegraph init",
+			args:         []string{"codegraph", "init", "--cwd", validRepo},
+			wantExitCode: 0,
+			wantStdout:   "Initialized CodeGraph index",
+		},
+		{
+			name:         "succeeds with --json output on valid project root",
+			args:         []string{"codegraph", "init", "--cwd", validRepo, "--json"},
+			wantExitCode: 0,
+			wantStdout:   `"status": "initialized"`,
+		},
+		{
+			name:         "refuses to initialize in user home directory",
+			args:         []string{"codegraph", "init", "--cwd", fakeHome},
+			wantExitCode: 1,
+			wantStderr:   "cannot initialize CodeGraph in user home directory",
+		},
+		{
+			name:         "refuses to initialize at filesystem root",
+			args:         []string{"codegraph", "init", "--cwd", "/"},
+			wantExitCode: 1,
+			wantStderr:   "cannot initialize CodeGraph at filesystem root",
+		},
+		{
+			name:         "refuses to initialize in /tmp",
+			args:         []string{"codegraph", "init", "--cwd", "/tmp"},
+			wantExitCode: 1,
+			wantStderr:   "cannot initialize CodeGraph in temporary directory",
+		},
+		{
+			name:         "refuses to initialize in /var/tmp",
+			args:         []string{"codegraph", "init", "--cwd", "/var/tmp"},
+			wantExitCode: 1,
+			wantStderr:   "cannot initialize CodeGraph in temporary directory",
+		},
+		{
+			name:         "refuses to initialize in non-existent directory",
+			args:         []string{"codegraph", "init", "--cwd", filepath.Join(fakeHome, "missing-dir")},
+			wantExitCode: 1,
+			wantStderr:   "does not exist",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Run(tt.args, Env{
+				Stdout:  &stdout,
+				Stderr:  &stderr,
+				HomeDir: fakeHome,
+				WorkDir: validRepo,
+				ExecCommand: func(name string, cmdArgs ...string) ([]byte, error) {
+					return []byte("ok: " + name + " " + strings.Join(cmdArgs, " ")), nil
+				},
+			})
+			if code != tt.wantExitCode {
+				t.Fatalf("Run(%v) exit = %d, want %d\nstdout: %s\nstderr: %s",
+					tt.args, code, tt.wantExitCode, stdout.String(), stderr.String())
+			}
+			if tt.wantStdout != "" && !strings.Contains(stdout.String(), tt.wantStdout) {
+				t.Errorf("stdout = %q, want substring %q", stdout.String(), tt.wantStdout)
+			}
+			if tt.wantStderr != "" && !strings.Contains(stderr.String(), tt.wantStderr) {
+				t.Errorf("stderr = %q, want substring %q", stderr.String(), tt.wantStderr)
+			}
+		})
+	}
 }

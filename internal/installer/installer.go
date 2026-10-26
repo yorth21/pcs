@@ -302,19 +302,17 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		}
 	}
 
-	// 1. Compose CLAUDE.md with base infrastructure markers (when absent) and pcs markers.
+	// 1. Compose CLAUDE.md with pcs-owned infrastructure, persona, orchestrator, and routing markers.
 	existingClaudeMD := ""
 	if b, readErr := os.ReadFile(layout.claudeMDPath); readErr == nil {
 		existingClaudeMD = string(b)
 	}
 	updatedClaudeMD := existingClaudeMD
-	if opts.WithMCP && !marker.HasBlock(updatedClaudeMD, assets.MarkerCodeGraphGuidance) {
+	if opts.WithMCP {
 		updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerCodeGraphGuidance, assets.CodeGraphGuidanceBlock())
 	}
-	if !marker.HasBlock(updatedClaudeMD, assets.MarkerPersona) {
-		updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerPersona, personaBlock)
-	}
-	if opts.WithMCP && !marker.HasBlock(updatedClaudeMD, assets.MarkerEngramProtocol) {
+	updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerPersona, personaBlock)
+	if opts.WithMCP {
 		updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerEngramProtocol, assets.EngramProtocolBlock())
 	}
 	updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerOrchestrator, orchBlock)
@@ -325,7 +323,7 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 			return nil, err
 		}
 	}
-	recordFile("upsert-markers", layout.claudeMDPath, "pcs:orchestrator, pcs:ux-routing")
+	recordFile("upsert-markers", layout.claudeMDPath, "pcs:codegraph-guidance, pcs:persona, pcs:engram-protocol, pcs:orchestrator, pcs:ux-routing")
 
 	// 2. Write 5 native subagents and ownership manifest.
 	var agentNames []string
@@ -398,16 +396,29 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		recordFile("merge-settings", layout.settingsJSONPath, "permissions.allow, enabledPlugins, UserPromptSubmit hook")
 	}
 
-	// 5. In profile scope, create the executable bin/claude-pcs launcher helper.
+	// 5. In profile scope, create cross-platform launchers (POSIX sh, Windows .cmd, and PowerShell .ps1).
 	if layout.scope == ScopeProfile && layout.launcherPath != "" {
-		launcherScript := fmt.Sprintf("#!/usr/bin/env sh\nexport CLAUDE_CONFIG_DIR=%q\nexec claude \"$@\"\n", layout.targetDir)
+		posixScript := fmt.Sprintf("#!/usr/bin/env sh\nexport CLAUDE_CONFIG_DIR=%q\nexec claude \"$@\"\n", layout.targetDir)
+		cmdPath := layout.launcherPath + ".cmd"
+		cmdScript := fmt.Sprintf("@echo off\r\nset \"CLAUDE_CONFIG_DIR=%s\"\r\nclaude %%*\r\n", layout.targetDir)
+		ps1Path := layout.launcherPath + ".ps1"
+		ps1Script := fmt.Sprintf("$env:CLAUDE_CONFIG_DIR = %q\n& claude @args\n", layout.targetDir)
+
 		if !opts.DryRun {
-			if err := writeFileCreatingDirs(layout.launcherPath, []byte(launcherScript), 0o755); err != nil {
+			if err := writeFileCreatingDirs(layout.launcherPath, []byte(posixScript), 0o755); err != nil {
+				return nil, err
+			}
+			if err := writeFileCreatingDirs(cmdPath, []byte(cmdScript), 0o644); err != nil {
+				return nil, err
+			}
+			if err := writeFileCreatingDirs(ps1Path, []byte(ps1Script), 0o644); err != nil {
 				return nil, err
 			}
 		}
 		report.LauncherCmd = fmt.Sprintf("CLAUDE_CONFIG_DIR=%q claude", layout.targetDir)
-		recordFile("write-launcher", layout.launcherPath, "executable profile wrapper")
+		recordFile("write-launcher", layout.launcherPath, "POSIX sh profile launcher")
+		recordFile("write-launcher", cmdPath, "Windows cmd profile launcher")
+		recordFile("write-launcher", ps1Path, "PowerShell profile launcher")
 	}
 
 	// 6. In workspace scope, refresh <workspace>/.atl/skill-registry.md immediately.
@@ -449,7 +460,7 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 }
 
 // Uninstall cleanly removes pcs-owned markers, pcs-* native agents, and pcs-*
-// skills while preserving all user files, custom agents, and gentle-ai files.
+// skills while preserving all user files, custom agents, and third-party files.
 func Uninstall(opts Options) (*Report, error) {
 	layout, err := resolveLayout(opts)
 	if err != nil {
@@ -463,12 +474,19 @@ func Uninstall(opts Options) (*Report, error) {
 		DryRun:    opts.DryRun,
 	}
 
-	// 1. Remove pcs:orchestrator and pcs:ux-routing markers from CLAUDE.md (never gentle-ai markers!).
+	// 1. Remove all 5 pcs:* markers from CLAUDE.md while preserving any user or third-party content.
 	if b, err := os.ReadFile(layout.claudeMDPath); err == nil {
 		content := string(b)
-		updated, r1 := marker.RemoveBlock(content, assets.MarkerOrchestrator)
-		updated, r2 := marker.RemoveBlock(updated, assets.MarkerUXRouting)
-		if r1 || r2 {
+		updated := content
+		anyRemoved := false
+		for _, m := range assets.AllPCSMarkers {
+			var removed bool
+			updated, removed = marker.RemoveBlock(updated, m)
+			if removed {
+				anyRemoved = true
+			}
+		}
+		if anyRemoved {
 			if !opts.DryRun {
 				if err := os.WriteFile(layout.claudeMDPath, []byte(updated), 0o644); err != nil {
 					return nil, fmt.Errorf("update %s: %w", layout.claudeMDPath, err)
@@ -477,7 +495,7 @@ func Uninstall(opts Options) (*Report, error) {
 			report.Actions = append(report.Actions, Action{
 				Operation: "remove-markers",
 				Path:      layout.claudeMDPath,
-				Detail:    "pcs:orchestrator, pcs:ux-routing",
+				Detail:    strings.Join(assets.AllPCSMarkers, ", "),
 			})
 		}
 	}
@@ -556,16 +574,26 @@ func Uninstall(opts Options) (*Report, error) {
 		Path:      layout.settingsJSONPath,
 	})
 
-	// 5. Remove profile launcher if present.
+	// 5. Remove cross-platform profile launchers if present and clean up bin/ if empty.
 	if layout.launcherPath != "" {
-		if _, err := os.Stat(layout.launcherPath); err == nil {
-			if !opts.DryRun {
-				_ = os.Remove(layout.launcherPath)
+		launcherVariants := []string{
+			layout.launcherPath,
+			layout.launcherPath + ".cmd",
+			layout.launcherPath + ".ps1",
+		}
+		for _, lp := range launcherVariants {
+			if _, err := os.Stat(lp); err == nil {
+				if !opts.DryRun {
+					_ = os.Remove(lp)
+				}
+				report.Actions = append(report.Actions, Action{
+					Operation: "remove-launcher",
+					Path:      lp,
+				})
 			}
-			report.Actions = append(report.Actions, Action{
-				Operation: "remove-launcher",
-				Path:      layout.launcherPath,
-			})
+		}
+		if !opts.DryRun {
+			_ = os.Remove(filepath.Dir(layout.launcherPath))
 		}
 	}
 
@@ -599,8 +627,11 @@ func Status(opts Options) (*StatusReport, error) {
 		ClaudeJSONPath:   layout.claudeJSONPath,
 		SettingsJSONPath: layout.settingsJSONPath,
 		Markers: map[string]bool{
-			assets.MarkerOrchestrator: false,
-			assets.MarkerUXRouting:    false,
+			assets.MarkerCodeGraphGuidance: false,
+			assets.MarkerPersona:           false,
+			assets.MarkerEngramProtocol:    false,
+			assets.MarkerOrchestrator:      false,
+			assets.MarkerUXRouting:         false,
 		},
 		Agents:     make(map[string]bool),
 		Skills:     make(map[string]bool),
@@ -614,8 +645,9 @@ func Status(opts Options) (*StatusReport, error) {
 
 	if b, err := os.ReadFile(layout.claudeMDPath); err == nil {
 		content := string(b)
-		rep.Markers[assets.MarkerOrchestrator] = marker.HasBlock(content, assets.MarkerOrchestrator)
-		rep.Markers[assets.MarkerUXRouting] = marker.HasBlock(content, assets.MarkerUXRouting)
+		for _, m := range assets.AllPCSMarkers {
+			rep.Markers[m] = marker.HasBlock(content, m)
+		}
 	}
 
 	allAgentsPresent := true

@@ -137,7 +137,7 @@ func MergeSettingsJSON(path string, components []string, targetDir string) error
 		enabledPlugins["engram@engram"] = true
 	}
 
-	// 3. Ensure UserPromptSubmit hook for skill-registry refresh (preserving existing gentle-ai hook if present).
+	// 3. Ensure UserPromptSubmit hook for pcs skill-registry refresh.
 	hooks := ensureMap(root, "hooks")
 	ensureSkillRegistryHook(hooks, targetDir)
 
@@ -151,9 +151,8 @@ func MergeSettingsJSON(path string, components []string, targetDir string) error
 
 // UnmergeMCP removes pcs-managed MCP servers and hooks when requested.
 // When onlyPCSOwned is true, shared infrastructure servers (engram, context7,
-// codegraph) andgentle-ai hooks are preserved so gentle-ai continues working;
-// only pcs-specific skill-registry hooks are removed. When onlyPCSOwned is
-// false, the 3 MCP servers and pcs permissions are also removed.
+// codegraph) are preserved while pcs skill-registry hooks are removed. When
+// onlyPCSOwned is false, the 3 MCP servers and pcs permissions are also removed.
 func UnmergeMCP(claudeJSONPath, settingsJSONPath string, onlyPCSOwned bool) error {
 	if !onlyPCSOwned && strings.TrimSpace(claudeJSONPath) != "" {
 		root, existed, rawExisting, err := readJSONObject(claudeJSONPath)
@@ -250,8 +249,8 @@ func permissionsForComponents(components []string) []string {
 func ensureSkillRegistryHook(hooks map[string]any, targetDir string) {
 	rawList, _ := hooks["UserPromptSubmit"].([]any)
 	for _, item := range rawList {
-		if strings.Contains(fmt.Sprint(item), "skill-registry") {
-			// Preserve existing gentle-ai or pcs skill-registry hook without duplicating.
+		if strings.Contains(fmt.Sprint(item), "pcs skill-registry refresh") {
+			// Preserve existing pcs skill-registry hook without duplicating.
 			return
 		}
 	}

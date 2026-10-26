@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -21,6 +23,7 @@ type Env struct {
 	HomeDir         string
 	WorkDir         string
 	ClaudeConfigDir string
+	ExecCommand     func(name string, args ...string) ([]byte, error)
 }
 
 // Run executes the pcs CLI command router and returns an exit code (0 on success).
@@ -57,6 +60,8 @@ func Run(args []string, env Env) int {
 		return runDoctor(rest, env)
 	case "skill-registry":
 		return runSkillRegistry(rest, env)
+	case "codegraph":
+		return runCodeGraph(rest, env)
 	default:
 		fmt.Fprintf(env.Stderr, "pcs: unknown command %q\n\n", sub)
 		printUsage(env.Stderr)
@@ -312,6 +317,101 @@ func runSkillRegistry(args []string, env Env) int {
 	return 0
 }
 
+func runCodeGraph(args []string, env Env) int {
+	if len(args) == 0 || args[0] != "init" {
+		fmt.Fprintf(env.Stderr, "usage: pcs codegraph init [--cwd <dir>] [--json]\n")
+		return 2
+	}
+
+	fs := flag.NewFlagSet("codegraph init", flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	cwd := fs.String("cwd", env.WorkDir, "Project root directory to initialize")
+	asJSON := fs.Bool("json", false, "Output initialization result as JSON")
+
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+
+	root := strings.TrimSpace(*cwd)
+	if root == "" {
+		var err error
+		root, err = os.Getwd()
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "pcs codegraph init: %v\n", err)
+			return 1
+		}
+	}
+
+	absRoot, err := validateCodeGraphRoot(root, env.HomeDir)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "pcs codegraph init refused: %v\n", err)
+		return 1
+	}
+
+	execFn := env.ExecCommand
+	if execFn == nil {
+		execFn = func(name string, cmdArgs ...string) ([]byte, error) {
+			return exec.Command(name, cmdArgs...).CombinedOutput()
+		}
+	}
+
+	out, err := execFn("codegraph", "init", absRoot)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "pcs codegraph init failed: %v (%s)\n", err, strings.TrimSpace(string(out)))
+		return 1
+	}
+
+	if *asJSON {
+		return writeJSONOutput(env.Stdout, map[string]any{
+			"status":       "initialized",
+			"project_root": absRoot,
+			"output":       strings.TrimSpace(string(out)),
+		})
+	}
+	fmt.Fprintf(env.Stdout, "Initialized CodeGraph index at %s\n", absRoot)
+	return 0
+}
+
+func validateCodeGraphRoot(root, homeDir string) (string, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve path %q: %w", root, err)
+	}
+	cleanRoot := filepath.Clean(absRoot)
+
+	if cleanRoot == "/" || cleanRoot == `\` || (len(cleanRoot) == 3 && cleanRoot[1] == ':' && (cleanRoot[2] == '\\' || cleanRoot[2] == '/')) {
+		return "", fmt.Errorf("cannot initialize CodeGraph at filesystem root %q", cleanRoot)
+	}
+
+	home := strings.TrimSpace(homeDir)
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if home != "" {
+		if absHome, err := filepath.Abs(home); err == nil {
+			if filepath.Clean(absHome) == cleanRoot {
+				return "", fmt.Errorf("cannot initialize CodeGraph in user home directory %q", cleanRoot)
+			}
+		}
+	}
+
+	for _, forbidden := range []string{"/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp"} {
+		if cleanRoot == forbidden || strings.HasPrefix(cleanRoot, forbidden+"/") {
+			return "", fmt.Errorf("cannot initialize CodeGraph in temporary directory %q", cleanRoot)
+		}
+	}
+
+	info, err := os.Stat(cleanRoot)
+	if err != nil {
+		return "", fmt.Errorf("target directory %q does not exist: %w", cleanRoot, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("target path %q is not a directory", cleanRoot)
+	}
+
+	return cleanRoot, nil
+}
+
 func writeJSONOutput(w io.Writer, v any) int {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -365,6 +465,7 @@ Commands:
   status                   Inspect installed markers, native subagents, skills, and MCP servers
   doctor                   Run diagnostic checks on MCP binaries, embedded brain, and target dir
   skill-registry refresh   Scan SKILL.md files and generate .atl/skill-registry.md
+  codegraph init           Validate project root and initialize CodeGraph index (.codegraph/)
   version                  Print pcs CLI version
   help                     Show this help message
 

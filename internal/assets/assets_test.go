@@ -28,7 +28,7 @@ func TestEmbeddedBlocksAndContracts(t *testing.T) {
 				"<!-- pcs:ux-routing -->",
 				"<!-- /pcs:ux-routing -->",
 				"### PCD Protocol",
-				"<!-- gentle-ai:remote-authorization -->",
+				"<!-- pcs:remote-authorization -->",
 			},
 		},
 		{
@@ -123,12 +123,12 @@ func TestSkillsAndAdapters(t *testing.T) {
 
 func TestBaseInfrastructureBlocks(t *testing.T) {
 	cg := CodeGraphGuidanceBlock()
-	if !strings.Contains(cg, "<!-- gentle-ai:codegraph-guidance -->") {
+	if !strings.Contains(cg, "<!-- pcs:codegraph-guidance -->") {
 		t.Error("expected codegraph guidance marker")
 	}
 
 	engram := EngramProtocolBlock()
-	if !strings.Contains(engram, "<!-- gentle-ai:engram-protocol -->") {
+	if !strings.Contains(engram, "<!-- pcs:engram-protocol -->") {
 		t.Error("expected engram protocol marker")
 	}
 
@@ -138,7 +138,7 @@ func TestBaseInfrastructureBlocks(t *testing.T) {
 			if err != nil {
 				t.Fatalf("PersonaBlock(%q) error: %v", variant, err)
 			}
-			if !strings.Contains(p, "<!-- gentle-ai:persona -->") {
+			if !strings.Contains(p, "<!-- pcs:persona -->") {
 				t.Errorf("PersonaBlock(%q) missing start marker", variant)
 			}
 		})

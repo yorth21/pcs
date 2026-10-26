@@ -13,10 +13,19 @@ import (
 const (
 	MarkerOrchestrator      = "pcs:orchestrator"
 	MarkerUXRouting         = "pcs:ux-routing"
-	MarkerCodeGraphGuidance = "gentle-ai:codegraph-guidance"
-	MarkerPersona           = "gentle-ai:persona"
-	MarkerEngramProtocol    = "gentle-ai:engram-protocol"
+	MarkerCodeGraphGuidance = "pcs:codegraph-guidance"
+	MarkerPersona           = "pcs:persona"
+	MarkerEngramProtocol    = "pcs:engram-protocol"
 )
+
+// AllPCSMarkers lists all five CLAUDE.md section markers owned and managed by pcs.
+var AllPCSMarkers = []string{
+	MarkerCodeGraphGuidance,
+	MarkerPersona,
+	MarkerEngramProtocol,
+	MarkerOrchestrator,
+	MarkerUXRouting,
+}
 
 // NativeAgentNames lists the five canonical Product Composition System subagents.
 var NativeAgentNames = []string{
@@ -150,50 +159,51 @@ func walkSkillSubtree(skillDirName string) ([]FileEntry, error) {
 	return out, nil
 }
 
-// CodeGraphGuidanceBlock returns the base <!-- gentle-ai:codegraph-guidance --> block
-// for standalone profiles or installations where gentle-ai has not yet injected it.
+// CodeGraphGuidanceBlock returns the <!-- pcs:codegraph-guidance --> block
+// injected into CLAUDE.md when MCP infrastructure is enabled.
 func CodeGraphGuidanceBlock() string {
-	return `<!-- gentle-ai:codegraph-guidance -->
+	return `<!-- pcs:codegraph-guidance -->
 ## CodeGraph Intelligence Protocol
 
 When ` + "`codegraph`" + ` MCP tools are available (` + "`mcp__codegraph__codegraph_explore`" + `), use structural AST exploration before broad filesystem grep or directory scans:
 
-1. Call ` + "`codegraph_explore`" + ` first to trace routes, component trees, hooks, symbol callers, and blast radius in a single call.
-2. Read only the specific file ranges returned by ` + "`codegraph_explore`" + `.
-3. Fall back to ` + "`Grep`" + ` / ` + "`Glob`" + ` only for non-code assets, styles, or when CodeGraph is unavailable.
-<!-- /gentle-ai:codegraph-guidance -->`
+1. If ` + "`.codegraph/`" + ` is missing in a real project workspace, initialize it once via ` + "`pcs codegraph init --cwd <project-root>`" + ` (or ` + "`codegraph init <project-root>`" + ` directly). Do not use ` + "`pcs codegraph`" + ` as a general proxy; its ` + "`init`" + ` command exists only to validate the project root before initialization; intelligence queries belong to the upstream ` + "`codegraph`" + ` CLI.
+2. Call ` + "`codegraph_explore`" + ` first to trace routes, component trees, hooks, symbol callers, and blast radius in a single call.
+3. Read only the specific file ranges returned by ` + "`codegraph_explore`" + `.
+4. Fall back to ` + "`Grep`" + ` / ` + "`Glob`" + ` only for non-code assets, styles, or when CodeGraph is unavailable.
+<!-- /pcs:codegraph-guidance -->`
 }
 
-// PersonaBlock returns the <!-- gentle-ai:persona --> block for the requested
+// PersonaBlock returns the <!-- pcs:persona --> block for the requested
 // persona variant ("gentleman" or "neutral").
 func PersonaBlock(persona string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(persona)) {
 	case "", "gentleman":
-		return `<!-- gentle-ai:persona -->
+		return `<!-- pcs:persona -->
 ## Persona & Artifact Language Contract
 
 - **Role**: Senior Product & Software Architect (15+ years experience). Direct, caring, and rigorous mentor who prioritizes user outcomes, cognitive clarity, and solid architectural foundations over impulsive code generation.
 - **Persona Scope (CRITICAL)**: Conversational tone and language apply ONLY to direct chat replies to the user.
 - **Artifact Language Contract**: Every technical or product artifact (` + "`pcs/specs/*`" + `, ` + "`pcs/tasks/*`" + `, code identifiers, comments, UI copy, accessibility labels, tests, documentation, and commit messages) MUST be written in clear, rigorous, professional English unless the project explicitly mandates another UI locale.
 - **Zero External Company Shorthand**: Never cite external product companies as shorthand for UX quality; state the concrete cognitive law, usability heuristic, or design token rule directly.
-<!-- /gentle-ai:persona -->`, nil
+<!-- /pcs:persona -->`, nil
 	case "neutral":
-		return `<!-- gentle-ai:persona -->
+		return `<!-- pcs:persona -->
 ## Persona & Artifact Language Contract
 
 - **Role**: Principal Product & Frontend Systems Engineer. Concise, analytical, and evidence-driven.
 - **Persona Scope (CRITICAL)**: Match the user's language in direct conversation while keeping all technical and product artifacts (` + "`pcs/specs/*`" + `, ` + "`pcs/tasks/*`" + `, source code, UI strings, tests, docs, and commits) in rigorous, professional English.
 - **Zero External Company Shorthand**: Never cite external product companies as shorthand for UX quality; state the concrete cognitive law, usability heuristic, or design token rule directly.
-<!-- /gentle-ai:persona -->`, nil
+<!-- /pcs:persona -->`, nil
 	default:
 		return "", fmt.Errorf("unsupported persona %q (supported: gentleman, neutral)", persona)
 	}
 }
 
-// EngramProtocolBlock returns the base <!-- gentle-ai:engram-protocol --> block
-// for standalone profiles or installations where gentle-ai has not yet injected it.
+// EngramProtocolBlock returns the <!-- pcs:engram-protocol --> block
+// injected into CLAUDE.md when MCP infrastructure is enabled.
 func EngramProtocolBlock() string {
-	return `<!-- gentle-ai:engram-protocol -->
+	return `<!-- pcs:engram-protocol -->
 ## Engram Persistent Memory — Protocol
 
 Engram (` + "`mcp__engram__*`" + `) provides persistent cross-session memory across compactions:
@@ -202,5 +212,5 @@ Engram (` + "`mcp__engram__*`" + `) provides persistent cross-session memory acr
 2. **Dual PCD Persistence**: Every ` + "`pcs-*`" + ` phase mirrors its specification and task state to Engram under ` + "`pcs/{feature-name}/{explore|strategy|architecture|tasks|apply|verify}`" + ` with ` + "`capture_prompt: false`" + ` when supported.
 3. **Recovery Before Re-Work**: Before resuming an existing feature or after compaction, call ` + "`mem_context`" + `, ` + "`mem_search`" + `, and ` + "`mem_get_observation`" + ` alongside reading on-disk ` + "`pcs/specs/`" + ` and ` + "`pcs/tasks/`" + ` artifacts.
 4. **Delivery Guarantee**: Saving to Engram is internal bookkeeping and never replaces the user-facing response.
-<!-- /gentle-ai:engram-protocol -->`
+<!-- /pcs:engram-protocol -->`
 }

@@ -64,7 +64,7 @@ func TestUpsertBlock(t *testing.T) {
 
 func TestUpsertBlockIdempotencyAndMultiBlockOrdering(t *testing.T) {
 	base := "# Team Handbook\n"
-	first := UpsertBlock(base, "gentle-ai:persona", "Persona v1")
+	first := UpsertBlock(base, "pcs:persona", "Persona v1")
 	second := UpsertBlock(first, "pcs:orchestrator", "Orchestrator v1")
 	third := UpsertBlock(second, "pcs:ux-routing", "Routing v1")
 
@@ -77,7 +77,7 @@ func TestUpsertBlockIdempotencyAndMultiBlockOrdering(t *testing.T) {
 
 	// Updating middle block keeps order: persona -> orchestrator -> ux-routing.
 	updated := UpsertBlock(again, "pcs:orchestrator", "Orchestrator v2")
-	idxPersona := strings.Index(updated, "<!-- gentle-ai:persona -->")
+	idxPersona := strings.Index(updated, "<!-- pcs:persona -->")
 	idxOrch := strings.Index(updated, "<!-- pcs:orchestrator -->")
 	idxRoute := strings.Index(updated, "<!-- pcs:ux-routing -->")
 	if !(idxPersona >= 0 && idxPersona < idxOrch && idxOrch < idxRoute) {

@@ -1,7 +1,7 @@
 # ODD Task Tracker — `pcs-cli` (Product Composition System Go CLI)
 
 ## Objective
-Build the standalone, zero-external-dependency Go CLI (`pcs`) modeled after `gentle-ai`, embedding `brain/**` and `docs/skill-style-guide.md` via `//go:embed`, configuring `engram`, `context7`, and `codegraph` MCP infrastructure alongside the `pcs` Brain (`orchestrator`, `ux-routing`, 5 `pcs-*` native subagents, `pcs-core`, and `pcs-adapter-react-shadcn`), and providing full lifecycle commands (`install`, `sync`, `uninstall`, `status`, `doctor`, `skill-registry refresh`, `version`) with comprehensive table-driven tests (`t.TempDir()`) and work-unit Conventional Commits.
+Build the standalone, zero-external-dependency Go CLI (`pcs`), embedding `brain/**` and `docs/skill-style-guide.md` via `//go:embed`, configuring `engram`, `context7`, and `codegraph` MCP infrastructure alongside the `pcs` Brain (`orchestrator`, `ux-routing`, 5 `pcs-*` native subagents, `pcs-core`, and `pcs-adapter-react-shadcn`), and providing full lifecycle commands (`install`, `sync`, `uninstall`, `status`, `doctor`, `skill-registry refresh`, `codegraph init`, `version`) with comprehensive table-driven tests (`t.TempDir()`) and work-unit Conventional Commits.
 
 ## Work Units
 
@@ -12,7 +12,7 @@ Build the standalone, zero-external-dependency Go CLI (`pcs`) modeled after `gen
   - Implement `internal/marker/` (idempotent HTML-comment section injector, updater, remover, and inspector for `<!-- ... -->` blocks) + `internal/marker/marker_test.go` (`3ffa7b9`).
 - [x] **WU-2: MCP Infrastructure Configurator (`engram`, `context7`, `codegraph`) & Installer Engine**
   - Implement `internal/mcp/` (idempotent merger/unmerger for `.claude.json` MCP servers [`engram`, `context7`, `codegraph`] and `settings.json` permissions/hooks/plugins, preserving user keys and creating `.bak` backups) + `internal/mcp/mcp_test.go`.
-  - Implement `internal/installer/` (`Install`, `Sync`, `Uninstall`, `Status` supporting `--scope global|workspace|profile` with `global` as default matching `gentle-ai`, respecting `PCS_INSTALL_SCOPE` and `CLAUDE_CONFIG_DIR`, `--target-dir`, `--adapter`, `--persona gentleman|neutral`, `--with-mcp=true|false`, `--dry-run`, state persistence in `.pcs-state.json`, and agent ownership tracking in `.pcs-native-agent-ownership.json`) + `internal/installer/installer_test.go` (`1622057`).
+  - Implement `internal/installer/` (`Install`, `Sync`, `Uninstall`, `Status` supporting `--scope global|workspace|profile` with `global` as default, respecting `PCS_INSTALL_SCOPE` and `CLAUDE_CONFIG_DIR`, `--target-dir`, `--adapter`, `--persona gentleman|neutral`, `--with-mcp=true|false`, `--dry-run`, cross-platform profile launchers (`sh`, `.cmd`, `.ps1`), state persistence in `.pcs-state.json`, and agent ownership tracking in `.pcs-native-agent-ownership.json`) + `internal/installer/installer_test.go` (`1622057`).
 - [x] **WU-3: Skill Registry Generator, Ecosystem Doctor & CLI Command Router**
   - Implement `internal/registry/` (`pcs skill-registry refresh [--cwd <dir>]` scanning installed & project `SKILL.md` frontmatter and writing `.atl/skill-registry.md`) + `internal/registry/registry_test.go`.
   - Implement `internal/doctor/` (`pcs doctor` checking `engram`, `codegraph`, `npx` [`context7`], embedded assets, `CLAUDE.md` markers, native agents, and skills) + `internal/doctor/doctor_test.go`.

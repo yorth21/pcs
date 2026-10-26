@@ -77,9 +77,11 @@ func TestInstallScopesAndLifecycle(t *testing.T) {
 			}
 
 			if tt.scope == ScopeProfile {
-				launcher := filepath.Join(targetDir, "bin", "claude-pcs")
-				if _, err := os.Stat(launcher); err != nil {
-					t.Errorf("expected profile launcher %s to exist: %v", launcher, err)
+				for _, ext := range []string{"", ".cmd", ".ps1"} {
+					launcher := filepath.Join(targetDir, "bin", "claude-pcs"+ext)
+					if _, err := os.Stat(launcher); err != nil {
+						t.Errorf("expected profile launcher %s to exist: %v", launcher, err)
+					}
 				}
 			}
 			if tt.scope == ScopeWorkspace {
@@ -109,29 +111,33 @@ func TestInstallScopesAndLifecycle(t *testing.T) {
 			if statusAfter.Installed {
 				t.Errorf("expected Status().Installed = false after Uninstall")
 			}
+			if tt.scope == ScopeProfile {
+				for _, ext := range []string{"", ".cmd", ".ps1"} {
+					launcher := filepath.Join(targetDir, "bin", "claude-pcs"+ext)
+					if _, err := os.Stat(launcher); !os.IsNotExist(err) {
+						t.Errorf("expected profile launcher %s to be removed on Uninstall", launcher)
+					}
+				}
+			}
 		})
 	}
 }
 
-func TestUninstallPreservesGentleAIAndUserFiles(t *testing.T) {
+func TestUninstallRemovesAllPCSMarkersAndPreservesUserFiles(t *testing.T) {
 	fakeHome := t.TempDir()
 	globalDir := filepath.Join(fakeHome, ".claude")
 
-	// Seed pre-existing gentle-ai CLAUDE.md, custom agent, and custom skill.
+	// Seed pre-existing user CLAUDE.md, custom agent, and custom skill.
 	claudeMD := filepath.Join(globalDir, "CLAUDE.md")
-	initialMD := `<!-- gentle-ai:persona -->
-Gentleman Persona
-<!-- /gentle-ai:persona -->
+	initialMD := `# Custom User Instructions
 
-<!-- gentle-ai:engram-protocol -->
-Engram Protocol
-<!-- /gentle-ai:engram-protocol -->
+Always keep builds deterministic.
 `
 	if err := writeFileCreatingDirs(claudeMD, []byte(initialMD), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	customAgent := filepath.Join(globalDir, "agents", "sdd-explorer.md")
-	if err := writeFileCreatingDirs(customAgent, []byte("# SDD Explorer\n"), 0o644); err != nil {
+	customAgent := filepath.Join(globalDir, "agents", "custom-reviewer.md")
+	if err := writeFileCreatingDirs(customAgent, []byte("# Custom Reviewer\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	customSkill := filepath.Join(globalDir, "skills", "go-testing", "SKILL.md")
@@ -152,27 +158,41 @@ Engram Protocol
 		t.Fatalf("Install() error: %v", err)
 	}
 
+	// Verify all 5 pcs:* markers were injected.
+	st, err := Status(opts)
+	if err != nil {
+		t.Fatalf("Status() error: %v", err)
+	}
+	for _, m := range []string{
+		"pcs:codegraph-guidance",
+		"pcs:persona",
+		"pcs:engram-protocol",
+		"pcs:orchestrator",
+		"pcs:ux-routing",
+	} {
+		if !st.Markers[m] {
+			t.Errorf("expected marker %q to be present after Install", m)
+		}
+	}
+
 	if _, err := Uninstall(opts); err != nil {
 		t.Fatalf("Uninstall() error: %v", err)
 	}
 
-	// Verify gentle-ai markers survived in CLAUDE.md while pcs markers were removed.
+	// Verify custom user markdown survived while all 5 pcs:* markers were cleanly removed.
 	afterMDBytes, err := os.ReadFile(claudeMD)
 	if err != nil {
 		t.Fatal(err)
 	}
 	afterMD := string(afterMDBytes)
-	if !strings.Contains(afterMD, "<!-- gentle-ai:persona -->") {
-		t.Error("expected gentle-ai:persona marker to be preserved after Uninstall")
+	if !strings.Contains(afterMD, "# Custom User Instructions") {
+		t.Error("expected user markdown to be preserved after Uninstall")
 	}
-	if !strings.Contains(afterMD, "<!-- gentle-ai:engram-protocol -->") {
-		t.Error("expected gentle-ai:engram-protocol marker to be preserved after Uninstall")
-	}
-	if strings.Contains(afterMD, "<!-- pcs:orchestrator -->") || strings.Contains(afterMD, "<!-- pcs:ux-routing -->") {
-		t.Error("expected pcs markers to be removed after Uninstall")
+	if strings.Contains(afterMD, "<!-- pcs:") {
+		t.Errorf("expected zero pcs:* markers after Uninstall, got:\n%s", afterMD)
 	}
 
-	// Verify custom sdd-explorer agent and go-testing skill survived.
+	// Verify custom agent and go-testing skill survived.
 	if _, err := os.Stat(customAgent); err != nil {
 		t.Errorf("expected pre-existing agent %s to be preserved: %v", customAgent, err)
 	}

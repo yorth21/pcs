@@ -1,12 +1,12 @@
 # Product Composition System (`pcs`) — Architecture Specification
 
-**Decision Summary:** `pcs` is a specialized **Product & UX/UI Brain** that layers cleanly on top of `gentle-ai` without duplicating its base infrastructure. `gentle-ai` owns persistent memory (`Engram`), structural code intelligence (`CodeGraph`), live documentation retrieval (`Context7`), persona, and runtime security; `pcs` owns the **Product-Centered Development (PCD)** orchestrator, 5 native UX/UI subagents, the technology-agnostic `pcs-core` methodology skill, and pluggable frontend stack adapters (`pcs-adapter-react-shadcn`).
+**Decision Summary:** `pcs` is a **100% standalone, self-contained Product, UX/UI & Frontend Engineering Orchestrator and Go CLI**. It owns both the **Product-Centered Development (PCD)** brain (orchestrator, 5 native UX/UI subagents, the technology-agnostic `pcs-core` methodology skill, and pluggable frontend stack adapters such as `pcs-adapter-react-shadcn`) and the direct runtime wiring for persistent memory (`Engram`), structural code intelligence (`CodeGraph`), live documentation retrieval (`Context7`), persona, and runtime security boundaries.
 
 ---
 
 ## 1. Two-Layer System Architecture
 
-`pcs` enforces a strict separation of concerns between **Base AI Infrastructure (Layer 1)** and **Product & UX/UI Composition Intelligence (Layer 2)**.
+`pcs` organizes its capabilities into **Foundational MCP & Runtime Infrastructure (Layer 1)** and **Product & UX/UI Composition Intelligence (Layer 2)**, managed end-to-end by the `pcs` CLI.
 
 ```mermaid
 flowchart TB
@@ -36,26 +36,26 @@ flowchart TB
         BLD & VER --> ADAPT
     end
 
-    subgraph L1["Layer 1 — Base Infrastructure (gentle-ai)"]
+    subgraph L1["Layer 1 — MCP & Runtime Infrastructure (Wired by pcs CLI)"]
         direction LR
-        ENG["Engram MCP<br/>Persistent Memory & Recovery"]
-        CG["CodeGraph MCP<br/>AST Call Graphs & Blast Radius"]
+        ENG["Engram MCP<br/>&lt;!-- pcs:engram-protocol --&gt;"]
+        CG["CodeGraph MCP<br/>&lt;!-- pcs:codegraph-guidance --&gt;"]
         C7["Context7 MCP<br/>Live Library Docs"]
         PW["Playwright MCP / CLI<br/>Live DOM & Viewport Inspection"]
-        SEC["Persona + Remote Auth<br/>+ Permission Boundaries"]
+        SEC["Persona + Remote Auth<br/>&lt;!-- pcs:persona --&gt;"]
     end
 
-    L2 ==>|"Consumes without re-implementing"| L1
+    L2 ==>|"Orchestrates & persists through"| L1
 ```
 
-### Layer Responsibility Matrix
+### Subsystem Responsibility Matrix
 
 | Subsystem | Owner | Mechanism | Purpose in `pcs` |
 |-----------|-------|-----------|------------------|
-| Persistent Memory | `gentle-ai` (Layer 1) | `mcp__engram__*` (`mem_save`, `mem_search`, `mem_get_observation`, `mem_context`) | Persists `pcs/<feature>/*` observations across sessions and compactions |
-| Structural Code Intelligence | `gentle-ai` (Layer 1) | `mcp__codegraph__codegraph_explore` | Maps routes, components, hooks, and blast radius before filesystem scans |
-| Live Library Documentation | `gentle-ai` (Layer 1) | `mcp__context7__*` | Verifies up-to-date API signatures for UI primitives, routers, and form libraries |
-| Voice, Language & Safety | `gentle-ai` (Layer 1) | `<!-- gentle-ai:persona -->`, `<!-- gentle-ai:remote-authorization -->` | Separates conversational tone from the strict English Artifact Language Contract |
+| Persistent Memory | `pcs` (Layer 1) | `mcp__engram__*` (`mem_save`, `mem_search`, `mem_get_observation`, `mem_context`), `<!-- pcs:engram-protocol -->` | Persists `pcs/<feature>/*` observations across sessions and compactions |
+| Structural Code Intelligence | `pcs` (Layer 1) | `mcp__codegraph__codegraph_explore`, `pcs codegraph init`, `<!-- pcs:codegraph-guidance -->` | Safely initializes `.codegraph/` and maps routes, components, hooks, and blast radius before filesystem scans |
+| Live Library Documentation | `pcs` (Layer 1) | `mcp__context7__*` | Verifies up-to-date API signatures for UI primitives, routers, and form libraries |
+| Voice, Language & Safety | `pcs` (Layer 1) | `<!-- pcs:persona -->`, `<!-- pcs:agent-language-contract -->`, `<!-- pcs:remote-authorization -->` | Separates conversational tone from the strict English Artifact Language Contract |
 | UX Orchestration & Routing | `pcs` (Layer 2) | `<!-- pcs:orchestrator -->`, `<!-- pcs:ux-routing -->` | Routes every UI request through Product-Centered Development (PCD) |
 | 5-Plane Product Execution | `pcs` (Layer 2) | `pcs-explorer`, `pcs-strategist`, `pcs-architect`, `pcs-builder`, `pcs-verifier` | Executes discovery, strategy/scope, structure/skeleton, surface build, and heuristic audit |
 | Agnostic UX Rules | `pcs` (Layer 2) | `brain/skills/pcs-core/` | Encodes the 5 Planes of UX, OOUX ORCA, HTA/KLM, Cognitive Laws, and 10 Heuristics |
@@ -134,14 +134,14 @@ All automated `mem_save` calls inside `pcs` phases set `capture_prompt: false` (
 
 ---
 
-## 5. Deployment, CLI Lifecycle & Scope Resolution (`gentle-ai` Parity)
+## 5. Deployment, CLI Lifecycle & Scope Resolution
 
-`pcs` ships as a standalone, zero-dependency Go CLI (`cmd/pcs`) that mirrors `gentle-ai`'s exact scope ergonomics (`--scope global|workspace`, defaulting to `global`, respecting `PCS_INSTALL_SCOPE` and `CLAUDE_CONFIG_DIR`, plus an optional `profile` shorthand). It embeds `brain/**` and `docs/skill-style-guide.md` directly into the binary via `//go:embed` (`embed.go`) and automatically wires `engram`, `context7`, and `codegraph` MCP servers.
+`pcs` ships as a standalone, zero-dependency Go CLI (`cmd/pcs`) supporting three scopes (`--scope global|workspace|profile`, defaulting to `global`, and respecting `PCS_INSTALL_SCOPE` and `CLAUDE_CONFIG_DIR`). It embeds `brain/**` and `docs/skill-style-guide.md` directly into the binary via `//go:embed` (`embed.go`) and automatically wires `engram`, `context7`, and `codegraph` MCP servers.
 
 ### Scope Resolution Order
 
 1. Explicit `--scope <global|workspace|profile>` flag (or `--profile` alias).
-2. `PCS_INSTALL_SCOPE` environment variable fallback (matching `gentle-ai`'s `GENTLE_AI_INSTALL_SCOPE`).
+2. `PCS_INSTALL_SCOPE` environment variable fallback.
 3. Default scope: **`global`**.
    - When `scope == "global"` and `--target-dir` is omitted: if `CLAUDE_CONFIG_DIR` is set in the environment, `pcs` targets `$CLAUDE_CONFIG_DIR` (writing MCP servers to `$CLAUDE_CONFIG_DIR/.claude.json`); otherwise it targets `$HOME/.claude` (writing MCP servers to `$HOME/.claude.json`).
 
@@ -155,21 +155,21 @@ When `pcs install` runs with `--with-mcp=true` (the default), `internal/mcp` ato
 | **`context7`** | `npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp` | `mcp__context7__*` |
 | **`codegraph`** | `codegraph serve --mcp` (`stdio`) | `mcp__codegraph__*` |
 
-In addition, `settings.json` receives a `UserPromptSubmit` hook (`pcs skill-registry refresh`) if a skill-registry hook is not already registered.
+In addition, `settings.json` receives a `UserPromptSubmit` hook (`pcs skill-registry refresh`) if not already registered.
 
-### Mode A: Global Scope (`--scope global`, Default) — Coexisting with `gentle-ai` or Custom `$CLAUDE_CONFIG_DIR`
+### Mode A: Global Scope (`--scope global`, Default)
 
 ```bash
-# Layers into ~/.claude + ~/.claude.json alongside gentle-ai
+# Installs into ~/.claude + ~/.claude.json
 pcs install --adapter react-shadcn --persona gentleman
 
 # Or targets an isolated Claude config directory via CLAUDE_CONFIG_DIR
 CLAUDE_CONFIG_DIR="$HOME/.claude-pcs" pcs install
 ```
 
-1. Preserves all existing `gentle-ai` blocks, agents (`sdd-*`), skills, and user projects in `~/.claude` and `~/.claude.json`.
-2. Upserts `<!-- pcs:orchestrator -->` and `<!-- pcs:ux-routing -->` into `CLAUDE.md` (plus base `codegraph-guidance`, `persona`, and `engram-protocol` blocks if not yet present).
-3. Installs `pcs-*.md` agents and `pcs-*` skills alongside existing `gentle-ai` assets, tracking ownership in `.pcs-native-agent-ownership.json` and `.pcs-state.json` so `pcs uninstall` removes only `pcs`-owned artifacts.
+1. Preserves all existing user settings, custom agents, skills, and projects in `~/.claude` and `~/.claude.json`.
+2. Upserts all 5 `pcs:*` markers (`<!-- pcs:codegraph-guidance -->`, `<!-- pcs:persona -->`, `<!-- pcs:engram-protocol -->`, `<!-- pcs:orchestrator -->`, and `<!-- pcs:ux-routing -->`) into `CLAUDE.md`.
+3. Installs `pcs-*.md` agents and `pcs-*` skills, tracking ownership in `.pcs-native-agent-ownership.json` and `.pcs-state.json` so `pcs uninstall` removes all 5 `pcs:*` markers and `pcs`-owned files cleanly.
 
 ### Mode B: Workspace Scope (`--scope workspace`, `<repo>/.claude`)
 
@@ -178,7 +178,7 @@ pcs install --scope workspace --target-dir /path/to/frontend-repo/.claude
 ```
 
 1. Writes `pcs-*.md` agents into `<repo>/.claude/agents/` and `pcs-*` skills into `<repo>/.claude/skills/`.
-2. Upserts `<!-- pcs:orchestrator -->` and `<!-- pcs:ux-routing -->` into `<repo>/CLAUDE.md`.
+2. Upserts `pcs:*` markers into `<repo>/CLAUDE.md`.
 3. Runs `pcs skill-registry refresh` to generate `<repo>/.atl/skill-registry.md` with a deterministic SHA-256 content hash header.
 
 ### Mode C: Explicit Profile Scope (`--scope profile`, `~/.claude-pcs`)
@@ -187,5 +187,8 @@ pcs install --scope workspace --target-dir /path/to/frontend-repo/.claude
 pcs install --scope profile --adapter react-shadcn --persona gentleman --with-mcp=true
 ```
 
-1. Creates `~/.claude-pcs` with `CLAUDE.md`, `agents/pcs-*.md`, `skills/{_shared,pcs-core,pcs-adapter-react-shadcn}`, `.claude.json`, `settings.json`, and an executable wrapper at `~/.claude-pcs/bin/claude-pcs`.
-
+1. Creates `~/.claude-pcs` with `CLAUDE.md`, `agents/pcs-*.md`, `skills/{_shared,pcs-core,pcs-adapter-react-shadcn}`, `.claude.json`, and `settings.json`.
+2. Generates cross-platform launchers in `~/.claude-pcs/bin/`:
+   - `claude-pcs` (POSIX shell script)
+   - `claude-pcs.cmd` (Windows Command Prompt batch script)
+   - `claude-pcs.ps1` (Windows PowerShell script)
