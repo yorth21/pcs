@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -49,6 +50,10 @@ type Options struct {
 	WithMCP         bool
 	DryRun          bool
 	RemoveMCP       bool
+	LauncherDir     string
+	LauncherArgs    string
+	NoStatusLine    bool
+	WithPlugins     bool
 	FlagOverrides   map[string]bool
 }
 
@@ -72,6 +77,10 @@ type State struct {
 	CreatedClaudeMD     bool     `json:"created_claude_md,omitempty"`
 	CreatedClaudeJSON   bool     `json:"created_claude_json,omitempty"`
 	CreatedSettingsJSON bool     `json:"created_settings_json,omitempty"`
+	LauncherDir         string   `json:"launcher_dir,omitempty"`
+	LauncherArgs        string   `json:"launcher_args,omitempty"`
+	AddedStatusLine     bool     `json:"added_status_line,omitempty"`
+	SharedMCPFile       string   `json:"shared_mcp_file,omitempty"`
 	ManagedFiles        []string `json:"managed_files"`
 }
 
@@ -101,6 +110,9 @@ type Report struct {
 	WithMCP        bool     `json:"with_mcp"`
 	DryRun         bool     `json:"dry_run"`
 	LauncherCmd    string   `json:"launcher_cmd,omitempty"`
+	LauncherDir    string   `json:"launcher_dir,omitempty"`
+	LauncherOnPath bool     `json:"launcher_on_path"`
+	NextSteps      []string `json:"next_steps,omitempty"`
 	Actions        []Action `json:"actions"`
 }
 
@@ -112,6 +124,7 @@ type StatusReport struct {
 	ClaudeMDPath     string          `json:"claude_md_path"`
 	ClaudeJSONPath   string          `json:"claude_json_path"`
 	SettingsJSONPath string          `json:"settings_json_path"`
+	SharedMCPPath    string          `json:"shared_mcp_path,omitempty"`
 	State            *State          `json:"state,omitempty"`
 	Markers          map[string]bool `json:"markers"`
 	Agents           map[string]bool `json:"agents"`
@@ -120,15 +133,20 @@ type StatusReport struct {
 }
 
 type resolvedLayout struct {
-	scope            string
-	targetDir        string
-	claudeMDPath     string
-	claudeJSONPath   string
-	settingsJSONPath string
-	agentsDir        string
-	skillsDir        string
-	launcherPath     string
-	workspaceRoot    string
+	scope              string
+	targetDir          string
+	claudeMDPath       string
+	claudeJSONPath     string
+	settingsJSONPath   string
+	agentsDir          string
+	skillsDir          string
+	launcherPath       string
+	sharedMCPPath      string
+	mainClaudeJSONPath string
+	mainSettingsPath   string
+	userBinDir         string
+	userBinLauncher    string
+	workspaceRoot      string
 }
 
 func normalizeOptions(opts *Options) {
@@ -169,6 +187,20 @@ func normalizeOptions(opts *Options) {
 		opts.MCPGuidance = BoolPtr(true)
 	}
 	opts.WithMCP = opts.WriteMCPConfig && opts.WriteHook && *opts.MCPGuidance
+}
+
+func isDirOnPath(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	cleanDir := filepath.Clean(dir)
+	pathEnv := os.Getenv("PATH")
+	for _, p := range filepath.SplitList(pathEnv) {
+		if filepath.Clean(p) == cleanDir || (runtime.GOOS == "windows" && strings.EqualFold(filepath.Clean(p), cleanDir)) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveLayout(opts Options) (*resolvedLayout, error) {
@@ -248,6 +280,28 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 		layout.claudeMDPath = filepath.Join(absTarget, "CLAUDE.md")
 		layout.claudeJSONPath = filepath.Join(absTarget, ".claude.json")
 		layout.launcherPath = filepath.Join(absTarget, "bin", "claude-pcs")
+		layout.sharedMCPPath = filepath.Join(absTarget, "shared-mcp.json")
+		layout.mainClaudeJSONPath = filepath.Join(absHome, ".claude.json")
+		layout.mainSettingsPath = filepath.Join(absHome, ".claude", "settings.json")
+		if opts.LauncherDir != "" {
+			absLauncherDir, err := filepath.Abs(opts.LauncherDir)
+			if err == nil {
+				layout.userBinDir = absLauncherDir
+			} else {
+				layout.userBinDir = opts.LauncherDir
+			}
+		} else {
+			if runtime.GOOS == "windows" {
+				localAppData := os.Getenv("LOCALAPPDATA")
+				if localAppData == "" {
+					localAppData = filepath.Join(absHome, "AppData", "Local")
+				}
+				layout.userBinDir = filepath.Join(localAppData, "pcs", "bin")
+			} else {
+				layout.userBinDir = filepath.Join(absHome, ".local", "bin")
+			}
+		}
+		layout.userBinLauncher = filepath.Join(layout.userBinDir, "claude-pcs")
 	case ScopeGlobal:
 		layout.claudeMDPath = filepath.Join(absTarget, "CLAUDE.md")
 		defaultGlobalDir := filepath.Join(absHome, ".claude")
@@ -312,6 +366,12 @@ func Sync(opts Options) (*Report, error) {
 			if !opts.FlagOverrides["write-hook"] {
 				opts.WriteHook = saved.WriteHook
 			}
+		}
+		if !opts.FlagOverrides["launcher-dir"] && opts.LauncherDir == "" {
+			opts.LauncherDir = saved.LauncherDir
+		}
+		if !opts.FlagOverrides["launcher-args"] && opts.LauncherArgs == "" {
+			opts.LauncherArgs = saved.LauncherArgs
 		}
 	}
 	normalizeOptions(&opts)
@@ -571,34 +631,113 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		recordFile("merge-settings", layout.settingsJSONPath, "settings.json update")
 	}
 
-	// 5. In profile scope, create cross-platform launchers (POSIX sh, Windows .cmd, and PowerShell .ps1).
-	if layout.scope == ScopeProfile && layout.launcherPath != "" {
-		posixScript := fmt.Sprintf("#!/usr/bin/env sh\nexport CLAUDE_CONFIG_DIR=%q\nexec claude \"$@\"\n", layout.targetDir)
-		cmdPath := layout.launcherPath + ".cmd"
-		cmdScript := fmt.Sprintf("@echo off\r\nset \"CLAUDE_CONFIG_DIR=%s\"\r\nclaude %%*\r\n", layout.targetDir)
-		ps1Path := layout.launcherPath + ".ps1"
-		escapedTargetForPS := strings.ReplaceAll(layout.targetDir, "'", "''")
-		ps1Script := fmt.Sprintf("$env:CLAUDE_CONFIG_DIR = '%s'\n& claude @args\n", escapedTargetForPS)
+	// 5. In profile scope, create shared-mcp.json, statusLine copy, and cross-platform launchers.
+	sharedMCPFile := ""
+	addedStatusLine := false
+	if prevState != nil {
+		sharedMCPFile = prevState.SharedMCPFile
+		addedStatusLine = prevState.AddedStatusLine
+	}
 
+	if layout.scope == ScopeProfile && layout.sharedMCPPath != "" {
 		if !opts.DryRun {
-			if err := writeFileCreatingDirs(layout.launcherPath, []byte(posixScript), 0o755); err != nil {
-				return nil, err
-			}
-			if err := writeFileCreatingDirs(cmdPath, []byte(cmdScript), 0o644); err != nil {
-				return nil, err
-			}
-			if err := writeFileCreatingDirs(ps1Path, []byte(ps1Script), 0o644); err != nil {
-				return nil, err
+			if err := mcp.GenerateSharedMCPFile(layout.sharedMCPPath, layout.mainClaudeJSONPath); err != nil {
+				return nil, fmt.Errorf("generate shared-mcp.json: %w", err)
 			}
 		}
+		sharedMCPFile = layout.sharedMCPPath
+		recordFile("write-shared-mcp", layout.sharedMCPPath, "shared MCP configuration (0600)")
+
+		if !opts.NoStatusLine {
+			if !opts.DryRun {
+				copied, err := mcp.CopyStatusLineIfMissing(layout.settingsJSONPath, layout.mainSettingsPath)
+				if err != nil {
+					return nil, fmt.Errorf("copy statusLine: %w", err)
+				}
+				if copied {
+					addedStatusLine = true
+					recordFile("copy-statusline", layout.settingsJSONPath, "copied statusLine from main profile")
+				}
+			} else {
+				recordFile("copy-statusline", layout.settingsJSONPath, "copy statusLine from main profile (dry-run)")
+			}
+		}
+
+		if opts.WithPlugins && !opts.DryRun {
+			cmd := exec.Command("claude", "plugin", "install", "engram@engram")
+			cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+layout.targetDir)
+			_ = cmd.Run()
+		}
+
+		launcherArgsStr := strings.TrimSpace(opts.LauncherArgs)
+		launcherArgsWithSpace := ""
+		if launcherArgsStr != "" {
+			launcherArgsWithSpace = launcherArgsStr + " "
+		}
+
+		// POSIX launcher: process-scoped via exec env so variables never leak into calling shell
+		posixScript := fmt.Sprintf("#!/usr/bin/env sh\nexec env CLAUDE_CONFIG_DIR=%q claude --mcp-config %q %s\"$@\"\n",
+			layout.targetDir, layout.sharedMCPPath, launcherArgsWithSpace)
+
+		// Windows CMD: scoped via setlocal/endlocal so variables never leak into calling shell
+		cmdScript := fmt.Sprintf("@echo off\r\nsetlocal\r\nset \"CLAUDE_CONFIG_DIR=%s\"\r\nclaude --mcp-config \"%%CLAUDE_CONFIG_DIR%%\\shared-mcp.json\" %s%%*\r\nendlocal\r\n",
+			layout.targetDir, launcherArgsWithSpace)
+
+		// Windows PowerShell: saves and restores $env:CLAUDE_CONFIG_DIR in finally block
+		escapedTargetForPS := strings.ReplaceAll(layout.targetDir, "'", "''")
+		escapedSharedMCPForPS := strings.ReplaceAll(layout.sharedMCPPath, "'", "''")
+		ps1Script := fmt.Sprintf("$prev = $env:CLAUDE_CONFIG_DIR\ntry {\n    $env:CLAUDE_CONFIG_DIR = '%s'\n    & claude --mcp-config '%s' %s@args\n} finally {\n    $env:CLAUDE_CONFIG_DIR = $prev\n}\n",
+			escapedTargetForPS, escapedSharedMCPForPS, launcherArgsWithSpace)
+
+		launcherDirs := []string{filepath.Dir(layout.launcherPath)}
+		if layout.userBinDir != "" && filepath.Clean(layout.userBinDir) != filepath.Clean(filepath.Dir(layout.launcherPath)) {
+			launcherDirs = append(launcherDirs, layout.userBinDir)
+		}
+
+		for _, lDir := range launcherDirs {
+			shFile := filepath.Join(lDir, "claude-pcs")
+			cmdFile := filepath.Join(lDir, "claude-pcs.cmd")
+			ps1File := filepath.Join(lDir, "claude-pcs.ps1")
+			if !opts.DryRun {
+				if err := writeFileCreatingDirs(shFile, []byte(posixScript), 0o755); err != nil {
+					return nil, err
+				}
+				if err := writeFileCreatingDirs(cmdFile, []byte(cmdScript), 0o644); err != nil {
+					return nil, err
+				}
+				if err := writeFileCreatingDirs(ps1File, []byte(ps1Script), 0o644); err != nil {
+					return nil, err
+				}
+			}
+			recordFile("write-launcher", shFile, "POSIX sh profile launcher")
+			recordFile("write-launcher", cmdFile, "Windows cmd profile launcher")
+			recordFile("write-launcher", ps1File, "PowerShell profile launcher")
+		}
+
+		report.LauncherDir = layout.userBinDir
+		report.LauncherOnPath = isDirOnPath(layout.userBinDir)
+
 		if runtime.GOOS == "windows" {
-			report.LauncherCmd = fmt.Sprintf("$env:CLAUDE_CONFIG_DIR='%s'; claude", escapedTargetForPS)
+			report.LauncherCmd = fmt.Sprintf("$env:CLAUDE_CONFIG_DIR='%s'; claude --mcp-config '%s'", escapedTargetForPS, escapedSharedMCPForPS)
 		} else {
-			report.LauncherCmd = fmt.Sprintf("CLAUDE_CONFIG_DIR=%q claude", layout.targetDir)
+			report.LauncherCmd = fmt.Sprintf("CLAUDE_CONFIG_DIR=%q claude --mcp-config %q", layout.targetDir, layout.sharedMCPPath)
 		}
-		recordFile("write-launcher", layout.launcherPath, "POSIX sh profile launcher")
-		recordFile("write-launcher", cmdPath, "Windows cmd profile launcher")
-		recordFile("write-launcher", ps1Path, "PowerShell profile launcher")
+
+		report.NextSteps = append(report.NextSteps,
+			"Profile ready! Run 'claude-pcs' and type '/login' to authenticate this profile.",
+			fmt.Sprintf("To install plugins into this profile: CLAUDE_CONFIG_DIR=%q claude plugin install engram@engram", layout.targetDir),
+		)
+		if !report.LauncherOnPath {
+			if runtime.GOOS == "windows" {
+				report.NextSteps = append(report.NextSteps,
+					fmt.Sprintf("Add launcher dir to PATH: setx PATH \"%%PATH%%;%s\"", layout.userBinDir),
+				)
+			} else {
+				report.NextSteps = append(report.NextSteps,
+					fmt.Sprintf("Add launcher dir to PATH: export PATH=%q:\"$PATH\"", layout.userBinDir),
+				)
+			}
+		}
 	}
 
 	// 6. In workspace scope, refresh <workspace>/.atl/pcs-skill-registry.md immediately.
@@ -632,6 +771,10 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		CreatedClaudeMD:     createdClaudeMD,
 		CreatedClaudeJSON:   createdClaudeJSON,
 		CreatedSettingsJSON: createdSettingsJSON,
+		LauncherDir:         layout.userBinDir,
+		LauncherArgs:        opts.LauncherArgs,
+		AddedStatusLine:     addedStatusLine,
+		SharedMCPFile:       sharedMCPFile,
 		ManagedFiles:        managedFiles,
 	}
 	if !opts.DryRun {
@@ -802,26 +945,55 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 	}
 
-	// 6. Remove cross-platform profile launchers if present and clean up bin/ if empty.
-	if layout.launcherPath != "" {
-		launcherVariants := []string{
-			layout.launcherPath,
-			layout.launcherPath + ".cmd",
-			layout.launcherPath + ".ps1",
-		}
-		for _, lp := range launcherVariants {
-			if _, err := os.Stat(lp); err == nil {
-				if !opts.DryRun {
-					_ = os.Remove(lp)
-				}
-				report.Actions = append(report.Actions, Action{
-					Operation: "remove-launcher",
-					Path:      lp,
-				})
+	// 6. In profile scope, remove shared-mcp.json, statusLine, and launchers.
+	if layout.sharedMCPPath != "" {
+		if _, err := os.Stat(layout.sharedMCPPath); err == nil {
+			if !opts.DryRun {
+				_ = os.Remove(layout.sharedMCPPath)
 			}
+			report.Actions = append(report.Actions, Action{
+				Operation: "remove-shared-mcp",
+				Path:      layout.sharedMCPPath,
+			})
 		}
+	}
+	if savedState != nil && savedState.AddedStatusLine {
 		if !opts.DryRun {
-			_ = os.Remove(filepath.Dir(layout.launcherPath))
+			_ = mcp.RemoveStatusLine(layout.settingsJSONPath)
+		}
+		report.Actions = append(report.Actions, Action{
+			Operation: "remove-statusline",
+			Path:      layout.settingsJSONPath,
+		})
+	}
+
+	// Remove cross-platform profile launchers if present and clean up bin/ if empty.
+	if layout.launcherPath != "" {
+		targetDirs := []string{filepath.Dir(layout.launcherPath)}
+		if savedState != nil && savedState.LauncherDir != "" {
+			if !slices.Contains(targetDirs, savedState.LauncherDir) {
+				targetDirs = append(targetDirs, savedState.LauncherDir)
+			}
+		} else if layout.userBinDir != "" && !slices.Contains(targetDirs, layout.userBinDir) {
+			targetDirs = append(targetDirs, layout.userBinDir)
+		}
+
+		for _, tDir := range targetDirs {
+			for _, name := range []string{"claude-pcs", "claude-pcs.cmd", "claude-pcs.ps1"} {
+				lp := filepath.Join(tDir, name)
+				if _, err := os.Stat(lp); err == nil {
+					if !opts.DryRun {
+						_ = os.Remove(lp)
+					}
+					report.Actions = append(report.Actions, Action{
+						Operation: "remove-launcher",
+						Path:      lp,
+					})
+				}
+			}
+			if !opts.DryRun {
+				_ = os.Remove(tDir)
+			}
 		}
 	}
 

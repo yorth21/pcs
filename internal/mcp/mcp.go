@@ -517,3 +517,96 @@ func writeJSONAtomicWithPerm(path string, data map[string]any, perm os.FileMode)
 	}
 	return nil
 }
+
+// ReadMainProfileMCPServers reads the mcpServers map from mainClaudeJSONPath read-only.
+// It returns nil, false, nil if the file does not exist or has no non-empty mcpServers map.
+func ReadMainProfileMCPServers(mainClaudeJSONPath string) (map[string]any, bool, error) {
+	if _, err := os.Stat(mainClaudeJSONPath); os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	root, _, _, _, err := readJSONObjectWithPerm(mainClaudeJSONPath, 0o600)
+	if err != nil {
+		return nil, false, err
+	}
+	if serversRaw, ok := root["mcpServers"]; ok {
+		if serversMap, ok := serversRaw.(map[string]any); ok && len(serversMap) > 0 {
+			return serversMap, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// GenerateSharedMCPFile writes the shared MCP configuration to outPath with 0o600 permissions.
+// If mainClaudeJSONPath contains configured mcpServers, they are reused directly; otherwise,
+// default pcs components (engram, context7, codegraph) are generated.
+func GenerateSharedMCPFile(outPath, mainClaudeJSONPath string) error {
+	servers, found, err := ReadMainProfileMCPServers(mainClaudeJSONPath)
+	if err != nil {
+		return err
+	}
+	if !found || len(servers) == 0 {
+		servers = make(map[string]any)
+		for _, comp := range DefaultComponents {
+			def, defErr := ServerDefinition(comp)
+			if defErr != nil {
+				return defErr
+			}
+			servers[comp] = def
+		}
+	}
+	payload := map[string]any{
+		"mcpServers": servers,
+	}
+	return writeJSONAtomicWithPerm(outPath, payload, 0o600)
+}
+
+// CopyStatusLineIfMissing copies statusLine from mainSettingsJSONPath into targetSettingsJSONPath
+// if targetSettingsJSONPath does not already define one. Returns true if a statusLine was copied.
+func CopyStatusLineIfMissing(targetSettingsJSONPath, mainSettingsJSONPath string) (bool, error) {
+	if _, err := os.Stat(mainSettingsJSONPath); os.IsNotExist(err) {
+		return false, nil
+	}
+	mainRoot, _, _, _, err := readJSONObjectWithPerm(mainSettingsJSONPath, 0o644)
+	if err != nil {
+		return false, err
+	}
+	statusLineVal, ok := mainRoot["statusLine"]
+	if !ok || statusLineVal == nil {
+		return false, nil
+	}
+
+	targetRoot, existed, rawExisting, perm, err := readJSONObjectWithPerm(targetSettingsJSONPath, 0o644)
+	if err != nil {
+		return false, err
+	}
+	if _, alreadyHas := targetRoot["statusLine"]; alreadyHas {
+		return false, nil
+	}
+	targetRoot["statusLine"] = statusLineVal
+	if existed {
+		if err := WritePrePCSBackupOnce(targetSettingsJSONPath, rawExisting, perm); err != nil {
+			return false, err
+		}
+	}
+	if err := writeJSONAtomicWithPerm(targetSettingsJSONPath, targetRoot, perm); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RemoveStatusLine removes the statusLine key from targetSettingsJSONPath if present.
+func RemoveStatusLine(targetSettingsJSONPath string) error {
+	if _, err := os.Stat(targetSettingsJSONPath); os.IsNotExist(err) {
+		return nil
+	}
+	targetRoot, _, _, perm, err := readJSONObjectWithPerm(targetSettingsJSONPath, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, has := targetRoot["statusLine"]; !has {
+		return nil
+	}
+	delete(targetRoot, "statusLine")
+	return writeJSONAtomicWithPerm(targetSettingsJSONPath, targetRoot, perm)
+}
+

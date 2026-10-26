@@ -84,3 +84,58 @@ func TestRunDoctor(t *testing.T) {
 		})
 	}
 }
+
+func TestDoctorProfileScopeChecks(t *testing.T) {
+	tmpHome := t.TempDir()
+	target := filepath.Join(tmpHome, ".claude-pcs")
+
+	if _, err := installer.Install(installer.Options{
+		Scope:     installer.ScopeProfile,
+		TargetDir: target,
+		HomeDir:   tmpHome,
+		WithMCP:   true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Run(Options{
+		Scope:     installer.ScopeProfile,
+		TargetDir: target,
+		HomeDir:   tmpHome,
+		LookPathFunc: func(file string) (string, error) {
+			if file == "claude-pcs" {
+				return "/usr/local/bin/claude-pcs", nil
+			}
+			return "/usr/bin/" + file, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	foundLauncher := false
+	foundSharedMCP := false
+	foundAuth := false
+
+	for _, c := range rep.Checks {
+		if c.Category == "profile" && c.Name == "launcher" && c.Status == "ok" {
+			foundLauncher = true
+		}
+		if c.Category == "profile" && c.Name == "shared-mcp.json" && c.Status == "ok" {
+			foundSharedMCP = true
+		}
+		if c.Category == "profile" && c.Name == "authentication" {
+			foundAuth = true
+		}
+	}
+
+	if !foundLauncher {
+		t.Errorf("expected ok check for profile launcher on PATH")
+	}
+	if !foundSharedMCP {
+		t.Errorf("expected ok check for shared-mcp.json in profile")
+	}
+	if !foundAuth {
+		t.Errorf("expected authentication check for profile")
+	}
+}

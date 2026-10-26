@@ -106,6 +106,10 @@ func runInstall(args []string, env Env) int {
 	writeMCPConfig := fs.Bool("write-mcp-config", false, "Write missing engram, context7, and codegraph MCP entries into .claude.json and settings.json")
 	writeHook := fs.Bool("write-hook", false, "Write the UserPromptSubmit skill-registry refresh hook into settings.json")
 	withMCP := fs.Bool("with-mcp", false, "Convenience alias for --mcp-guidance=true --write-mcp-config=true --write-hook=true")
+	launcherDir := fs.String("launcher-dir", "", "Custom launcher installation directory (default: ~/.local/bin or %LOCALAPPDATA%\\pcs\\bin)")
+	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into claude-pcs launcher")
+	withPlugins := fs.Bool("with-plugins", false, "Install required plugins into profile via claude plugin install")
+	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json")
 	dryRun := fs.Bool("dry-run", false, "Preview planned actions without writing files")
 	asJSON := fs.Bool("json", false, "Output installation report as JSON")
 
@@ -131,6 +135,10 @@ func runInstall(args []string, env Env) int {
 		WriteMCPConfig:  *writeMCPConfig,
 		WriteHook:       *writeHook,
 		WithMCP:         *withMCP,
+		LauncherDir:     *launcherDir,
+		LauncherArgs:    *launcherArgs,
+		WithPlugins:     *withPlugins,
+		NoStatusLine:    *noStatusLine,
 		DryRun:          *dryRun,
 		FlagOverrides:   overrides,
 	})
@@ -158,6 +166,10 @@ func runSync(args []string, env Env) int {
 	writeMCPConfig := fs.Bool("write-mcp-config", false, "Override whether missing MCP servers and permissions are written to .claude.json and settings.json")
 	writeHook := fs.Bool("write-hook", false, "Override whether the UserPromptSubmit skill-registry hook is written to settings.json")
 	withMCP := fs.Bool("with-mcp", false, "Convenience alias for --mcp-guidance=true --write-mcp-config=true --write-hook=true")
+	launcherDir := fs.String("launcher-dir", "", "Custom launcher installation directory")
+	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into claude-pcs launcher")
+	withPlugins := fs.Bool("with-plugins", false, "Install required plugins into profile via claude plugin install")
+	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json")
 	dryRun := fs.Bool("dry-run", false, "Preview planned sync actions without writing files")
 	asJSON := fs.Bool("json", false, "Output sync report as JSON")
 
@@ -191,6 +203,10 @@ func runSync(args []string, env Env) int {
 		WriteMCPConfig:  *writeMCPConfig,
 		WriteHook:       *writeHook,
 		WithMCP:         *withMCP,
+		LauncherDir:     *launcherDir,
+		LauncherArgs:    *launcherArgs,
+		WithPlugins:     *withPlugins,
+		NoStatusLine:    *noStatusLine,
 		DryRun:          *dryRun,
 		FlagOverrides:   overrides,
 	})
@@ -302,6 +318,9 @@ func visitedFlags(fs *flag.FlagSet) map[string]bool {
 func runDoctor(args []string, env Env) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
+	scope := fs.String("scope", "", "Target scope: global, workspace, or profile")
+	profileAlias := fs.Bool("profile", false, "Shorthand for --scope profile")
+	profileDir := fs.String("profile-dir", "", "Custom profile directory when inspecting profile scope")
 	targetDir := fs.String("target-dir", "", "Optional target directory to inspect")
 	asJSON := fs.Bool("json", false, "Output diagnostic report as JSON")
 
@@ -309,9 +328,16 @@ func runDoctor(args []string, env Env) int {
 		return 2
 	}
 
+	chosenScope := *scope
+	if *profileAlias {
+		chosenScope = installer.ScopeProfile
+	}
+
 	rep, err := doctor.Run(doctor.Options{
-		TargetDir: *targetDir,
-		HomeDir:   env.HomeDir,
+		Scope:      chosenScope,
+		TargetDir:  *targetDir,
+		ProfileDir: *profileDir,
+		HomeDir:    env.HomeDir,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "pcs doctor failed: %v\n", err)
@@ -524,6 +550,12 @@ func printReport(w io.Writer, rep *installer.Report) {
 	}
 	if rep.LauncherCmd != "" {
 		fmt.Fprintf(w, "\nLaunch isolated Product Composition session with:\n  %s\n", rep.LauncherCmd)
+	}
+	if len(rep.NextSteps) > 0 {
+		fmt.Fprintf(w, "\nNext steps:\n")
+		for _, s := range rep.NextSteps {
+			fmt.Fprintf(w, "  • %s\n", s)
+		}
 	}
 }
 

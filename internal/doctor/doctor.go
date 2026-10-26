@@ -28,7 +28,9 @@ type DiagnosticReport struct {
 
 // Options configures a doctor diagnostic run.
 type Options struct {
+	Scope        string
 	TargetDir    string
+	ProfileDir   string
 	HomeDir      string
 	LookPathFunc func(file string) (string, error)
 }
@@ -122,6 +124,9 @@ func Run(opts Options) (*DiagnosticReport, error) {
 
 	// 3. Target installation checks if target directory exists or was explicitly requested.
 	targetDir := strings.TrimSpace(opts.TargetDir)
+	if targetDir == "" && opts.ProfileDir != "" {
+		targetDir = opts.ProfileDir
+	}
 	explicitTarget := targetDir != ""
 	if targetDir == "" {
 		home := opts.HomeDir
@@ -138,11 +143,15 @@ func Run(opts Options) (*DiagnosticReport, error) {
 
 	if targetDir != "" {
 		report.TargetDir = targetDir
-		scope := inferScope(targetDir)
+		scope := opts.Scope
+		if scope == "" {
+			scope = inferScope(targetDir)
+		}
 		status, err := installer.Status(installer.Options{
-			Scope:     scope,
-			TargetDir: targetDir,
-			HomeDir:   opts.HomeDir,
+			Scope:      scope,
+			TargetDir:  targetDir,
+			ProfileDir: opts.ProfileDir,
+			HomeDir:    opts.HomeDir,
 		})
 		if err != nil {
 			addCheck("target", "status", "error", err.Error())
@@ -184,6 +193,31 @@ func Run(opts Options) (*DiagnosticReport, error) {
 				msg = "not configured in MCP JSON"
 			}
 			addCheck("target-mcp", "mcp:"+srv, st, msg)
+		}
+
+		if scope == installer.ScopeProfile {
+			// Profile check 1: launcher on PATH
+			if lp, err := lookPath("claude-pcs"); err == nil {
+				addCheck("profile", "launcher", "ok", fmt.Sprintf("claude-pcs found on PATH (%s)", lp))
+			} else {
+				addCheck("profile", "launcher", "warn", "claude-pcs not found on PATH. Run 'pcs install --scope profile' or add launcher directory to PATH")
+			}
+
+			// Profile check 2: shared-mcp.json presence
+			sharedMCP := filepath.Join(targetDir, "shared-mcp.json")
+			if _, err := os.Stat(sharedMCP); err == nil {
+				addCheck("profile", "shared-mcp.json", "ok", "shared MCP configuration file present")
+			} else {
+				addCheck("profile", "shared-mcp.json", "warn", "shared-mcp.json missing. Run 'pcs sync --scope profile' to generate it")
+			}
+
+			// Profile check 3: authentication check (file existence only, never read credentials)
+			credsPath := filepath.Join(targetDir, ".credentials.json")
+			if _, err := os.Stat(credsPath); err == nil {
+				addCheck("profile", "authentication", "ok", "profile authenticated (.credentials.json present)")
+			} else {
+				addCheck("profile", "authentication", "warn", "profile not authenticated yet. Run 'claude-pcs' and execute '/login' once")
+			}
 		}
 	}
 

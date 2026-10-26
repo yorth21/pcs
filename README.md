@@ -33,13 +33,13 @@ make build
 
 | Command | Purpose |
 |---------|---------|
-| `pcs install [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--adapter react-shadcn] [--persona gentleman\|neutral] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Deploy `pcs` orchestrator & infrastructure markers (`pcs:*`), 5 native subagents, and `pcs-core` + Stack Adapter skills. By default `--mcp-guidance=true`, `--write-mcp-config=false`, and `--write-hook=false` so existing `.claude.json` and `settings.json` files are never modified unless explicitly requested |
-| `pcs sync [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--adapter <name>] [--persona <name>] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and `pcs:*` markers using `.pcs-state.json` while honoring any explicit flag overrides |
+| `pcs install [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--launcher-dir <dir>] [--launcher-args <args>] [--with-plugins] [--no-statusline] [--adapter react-shadcn] [--persona gentleman\|neutral] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Deploy `pcs` orchestrator & infrastructure markers (`pcs:*`), 5 native subagents, and `pcs-core` + Stack Adapter skills. In profile scope, installs `claude-pcs` launchers on PATH, isolates environment, generates `shared-mcp.json`, and inherits status line |
+| `pcs sync [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--launcher-dir <dir>] [--launcher-args <args>] [--with-plugins] [--no-statusline] [--adapter <name>] [--persona <name>] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and `pcs:*` markers using `.pcs-state.json` while honoring any explicit flag overrides |
 | `pcs status [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--json]` | Inspect installed `CLAUDE.md` markers (`pcs:*`), native subagents, skills, and MCP configuration |
-| `pcs doctor [--target-dir <dir>] [--json]` | Run diagnostic checks on `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation |
+| `pcs doctor [--scope global\|workspace\|profile] [--profile <name>] [--profile-dir <dir>] [--target-dir <dir>] [--json]` | Run diagnostic checks on `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation (including profile authentication and PATH status) |
 | `pcs skill-registry refresh [--cwd <dir>] [--skills-dir <dir>] [--json]` | Scan `SKILL.md` frontmatter and write deterministic `.atl/pcs-skill-registry.md` with SHA-256 cache-hit header |
 | `pcs codegraph init [--cwd <dir>] [--json]` | Validate project root (refusing `$HOME`, `/`, `os.TempDir()`, `/tmp`, `/var/tmp`) and initialize `.codegraph/` index |
-| `pcs uninstall [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--remove-mcp] [--dry-run] [--json]` | Cleanly remove all 5 `pcs:*` markers, `pcs-*` native subagents, `pcs-*` skills, `.atl/pcs-skill-registry.md`, and `pcs`-added MCP/hook deltas without touching user files |
+| `pcs uninstall [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--remove-mcp] [--dry-run] [--json]` | Cleanly remove all 5 `pcs:*` markers, `pcs-*` native subagents, `pcs-*` skills, `.atl/pcs-skill-registry.md`, launchers, `shared-mcp.json`, and `pcs`-added MCP/hook deltas without touching user files |
 | `pcs version [--json]` | Print `pcs` CLI version |
 
 ---
@@ -141,6 +141,28 @@ pcs/
             ├── references/            # Folder rules, vanilla catalog, TanStack/RHF & Tailwind v4
             └── assets/                # Production-grade TypeScript composition blueprints
 ```
+
+---
+
+## Using `pcs` as a Separate Profile Next to `gentle-ai`
+
+If you already have another orchestrator or tool installed in your global `~/.claude` (such as `gentle-ai`), you can run `pcs` in complete isolation using **Profile Scope**:
+
+```bash
+# 1. Install pcs into a dedicated profile
+pcs install --scope profile --profile-dir ~/.claude-pcs --adapter react-shadcn --persona gentleman
+
+# 2. Check diagnostic health and profile status
+pcs doctor --scope profile
+```
+
+### Why Profile Scope is Safe & Seamless
+
+1. **Zero Global Mutation**: Does not touch `~/.claude/CLAUDE.md`, `~/.claude.json`, or existing global plugins.
+2. **Process-Scoped Launcher on `PATH`**: Installs `claude-pcs` (POSIX), `claude-pcs.cmd` (Windows Command Prompt), and `claude-pcs.ps1` (PowerShell) directly into your user bin directory (`~/.local/bin` on Unix/macOS or `%LOCALAPPDATA%\pcs\bin` on Windows, customizable via `--launcher-dir`). The launcher executes `claude` with `CLAUDE_CONFIG_DIR` scoped strictly to that invocation, so your interactive shell environment is never contaminated.
+3. **MCP Server Sharing (`shared-mcp.json`)**: Reads the MCP server definitions from your main profile's `~/.claude.json` and copies them to `<profile-dir>/shared-mcp.json` (chmod 0600). The launcher invokes Claude with `--mcp-config <profile-dir>/shared-mcp.json`, allowing full access to your existing MCP tools without duplicate configuration or risk of file corruption.
+4. **Status Line & Plugin Parity**: Automatically inherits your custom `statusLine` command from `~/.claude/settings.json` (skip with `--no-statusline`). Plugins can be passed with `--with-plugins` or installed directly into the profile via `herdr integration install claude`.
+5. **First-Run Authentication**: Run `claude-pcs` and enter `/login` on first launch. `pcs doctor --scope profile` verifies that credentials, launchers, and shared configs are in place.
 
 ---
 

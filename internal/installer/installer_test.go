@@ -538,3 +538,136 @@ func TestDefaultGlobalScopeAndEnvironmentFallbacks(t *testing.T) {
 		})
 	}
 }
+
+func TestProfileScopeLauncherIsolationAndSharedMCP(t *testing.T) {
+	fakeHome := t.TempDir()
+	mainClaudeJSONPath := filepath.Join(fakeHome, ".claude.json")
+	mainSettingsDir := filepath.Join(fakeHome, ".claude")
+	if err := os.MkdirAll(mainSettingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mainSettingsPath := filepath.Join(mainSettingsDir, "settings.json")
+
+	// Seed main profile with a custom MCP server and statusLine
+	mainClaudeJSONContent := `{"mcpServers": {"main-server": {"command": "custom-mcp", "args": ["serve"]}}}` + "\n"
+	if err := os.WriteFile(mainClaudeJSONPath, []byte(mainClaudeJSONContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mainSettingsContent := `{"statusLine": {"command": "echo profile:gentle"}}` + "\n"
+	if err := os.WriteFile(mainSettingsPath, []byte(mainSettingsContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	profileDir := filepath.Join(fakeHome, "custom profile with spaces", ".claude-pcs")
+	launcherDir := filepath.Join(fakeHome, "bin with spaces")
+
+	opts := Options{
+		Scope:        ScopeProfile,
+		TargetDir:    profileDir,
+		HomeDir:      fakeHome,
+		LauncherDir:  launcherDir,
+		LauncherArgs: "--dangerously-skip-permissions",
+	}
+
+	rep, err := Install(opts)
+	if err != nil {
+		t.Fatalf("Install() profile error: %v", err)
+	}
+
+	// 1. Verify shared-mcp.json was created and reused main profile's MCP servers
+	sharedMCPPath := filepath.Join(profileDir, "shared-mcp.json")
+	sharedData, err := os.ReadFile(sharedMCPPath)
+	if err != nil {
+		t.Fatalf("failed to read shared-mcp.json: %v", err)
+	}
+	if !strings.Contains(string(sharedData), "main-server") {
+		t.Errorf("expected shared-mcp.json to contain main-server from main profile:\n%s", string(sharedData))
+	}
+
+	// 2. Verify main profile's .claude.json was NOT mutated
+	afterMainJSON, err := os.ReadFile(mainClaudeJSONPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterMainJSON) != mainClaudeJSONContent {
+		t.Errorf("main profile .claude.json was modified!\ngot:  %s\nwant: %s", string(afterMainJSON), mainClaudeJSONContent)
+	}
+
+	// 3. Verify statusLine was copied into profile's settings.json
+	profileSettingsPath := filepath.Join(profileDir, "settings.json")
+	profSettingsData, err := os.ReadFile(profileSettingsPath)
+	if err != nil {
+		t.Fatalf("failed to read profile settings.json: %v", err)
+	}
+	if !strings.Contains(string(profSettingsData), "echo profile:gentle") {
+		t.Errorf("expected statusLine to be copied into profile settings.json:\n%s", string(profSettingsData))
+	}
+
+	// 4. Verify launchers were created in launcherDir with environment isolation and --mcp-config
+	shPath := filepath.Join(launcherDir, "claude-pcs")
+	cmdPath := filepath.Join(launcherDir, "claude-pcs.cmd")
+	ps1Path := filepath.Join(launcherDir, "claude-pcs.ps1")
+
+	shBytes, err := os.ReadFile(shPath)
+	if err != nil {
+		t.Fatalf("missing POSIX launcher: %v", err)
+	}
+	if !strings.Contains(string(shBytes), "exec env CLAUDE_CONFIG_DIR=") || !strings.Contains(string(shBytes), "--mcp-config") || !strings.Contains(string(shBytes), "--dangerously-skip-permissions") {
+		t.Errorf("POSIX launcher missing exec env or --mcp-config:\n%s", string(shBytes))
+	}
+
+	cmdBytes, err := os.ReadFile(cmdPath)
+	if err != nil {
+		t.Fatalf("missing CMD launcher: %v", err)
+	}
+	if !strings.Contains(string(cmdBytes), "setlocal") || !strings.Contains(string(cmdBytes), "endlocal") || !strings.Contains(string(cmdBytes), "shared-mcp.json") {
+		t.Errorf("CMD launcher missing setlocal/endlocal or shared-mcp.json:\n%s", string(cmdBytes))
+	}
+
+	ps1Bytes, err := os.ReadFile(ps1Path)
+	if err != nil {
+		t.Fatalf("missing PS1 launcher: %v", err)
+	}
+	if !strings.Contains(string(ps1Bytes), "try {") || !strings.Contains(string(ps1Bytes), "finally {") || !strings.Contains(string(ps1Bytes), "$env:CLAUDE_CONFIG_DIR = $prev") {
+		t.Errorf("PS1 launcher missing try/finally environment restoration:\n%s", string(ps1Bytes))
+	}
+
+	// 5. Verify NextSteps guidance
+	if len(rep.NextSteps) == 0 {
+		t.Errorf("expected NextSteps guidance in report for profile install")
+	}
+
+	// 6. Test Sync regenerates shared-mcp.json and preserves settings
+	syncRep, err := Sync(opts)
+	if err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+	if syncRep == nil {
+		t.Fatal("expected non-nil sync report")
+	}
+
+	// 7. Test Uninstall cleans up launchers, shared-mcp.json, and statusLine
+	unRep, err := Uninstall(opts)
+	if err != nil {
+		t.Fatalf("Uninstall() error: %v", err)
+	}
+	if unRep == nil {
+		t.Fatal("expected non-nil uninstall report")
+	}
+
+	if _, err := os.Stat(sharedMCPPath); !os.IsNotExist(err) {
+		t.Errorf("expected shared-mcp.json to be deleted after uninstall")
+	}
+	if _, err := os.Stat(shPath); !os.IsNotExist(err) {
+		t.Errorf("expected launcher %s to be deleted after uninstall", shPath)
+	}
+
+	// Verify main profile .claude.json is STILL byte-identical after uninstall
+	finalMainJSON, err := os.ReadFile(mainClaudeJSONPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(finalMainJSON) != mainClaudeJSONContent {
+		t.Errorf("main profile .claude.json modified after uninstall!\ngot:  %s\nwant: %s", string(finalMainJSON), mainClaudeJSONContent)
+	}
+}
