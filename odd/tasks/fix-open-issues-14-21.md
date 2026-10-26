@@ -54,7 +54,7 @@ The acceptance criteria listed in each issue body, expressed as tests where the 
 - T1: the profile guard skips the `$CLAUDE_CONFIG_DIR` check when that directory already holds a pcs profile state, so `pcs sync` still works inside a `claude-pcs` session; `~/.claude` is never exempt.
 - T1: uninstall without state removes launchers only when they carry the pcs launcher signature.
 - T2: "no record" is a nil list (field missing or `null`); "empty record" is `[]`. Fresh installs write `[]`; legacy states stay unrecorded unless a run adds entries (partial record, under-removes only).
-- Follow-up: `AGENTS.md` section 5 still says profile scope respects `$CLAUDE_CONFIG_DIR`; it was outside the T1 writer's allowed edit surfaces.
+- `AGENTS.md` section 5 updated inline by the parent to reflect the profile-scope rule.
 
 ## Next step
 
