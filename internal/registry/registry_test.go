@@ -16,7 +16,7 @@ func TestRefresh(t *testing.T) {
 		wantContains   []string
 	}{
 		{
-			name: "discovers workspace brain skills and writes deterministic table",
+			name: "discovers workspace brain skills and writes deterministic pcs-skill-registry.md table",
 			setup: func(t *testing.T, rootDir, _ string) {
 				writeSkill(t, filepath.Join(rootDir, "brain", "skills", "pcs-core", "SKILL.md"),
 					"pcs-core", "Trigger: UX design, 5 planes.")
@@ -35,7 +35,7 @@ func TestRefresh(t *testing.T) {
 			},
 		},
 		{
-			name: "merges extra profile skills directory when provided",
+			name: "merges custom profile skills directory and classifies scope as profile",
 			setup: func(t *testing.T, rootDir, extraDir string) {
 				writeSkill(t, filepath.Join(rootDir, ".claude", "skills", "local-skill", "SKILL.md"),
 					"local-skill", "Trigger: Local repo workflow.")
@@ -46,7 +46,7 @@ func TestRefresh(t *testing.T) {
 			wantSkillNames: []string{"local-skill", "pcs-core"},
 			wantContains: []string{
 				"| `local-skill` | `workspace` | Trigger: Local repo workflow. | `.claude/skills/local-skill/SKILL.md` |",
-				"| `pcs-core` |",
+				"| `pcs-core` | `profile` | Trigger: Profile UX core. |",
 			},
 		},
 	}
@@ -54,8 +54,18 @@ func TestRefresh(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rootDir := t.TempDir()
-			extraDir := filepath.Join(t.TempDir(), ".claude-pcs", "skills")
+			extraDir := filepath.Join(t.TempDir(), "custom-profile-dir", "skills")
 			tt.setup(t, rootDir, extraDir)
+
+			// Seed a pre-existing .atl/skill-registry.md from another tool to verify PCS never overwrites it.
+			legacyRegistry := filepath.Join(rootDir, ".atl", "skill-registry.md")
+			if err := os.MkdirAll(filepath.Dir(legacyRegistry), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			const otherToolContent = "# External Skill Registry\nDo not touch.\n"
+			if err := os.WriteFile(legacyRegistry, []byte(otherToolContent), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
 			var extras []string
 			if tt.useExtra {
@@ -65,6 +75,9 @@ func TestRefresh(t *testing.T) {
 			res, err := Refresh(rootDir, extras)
 			if err != nil {
 				t.Fatalf("Refresh() error: %v", err)
+			}
+			if filepath.Base(res.OutputPath) != "pcs-skill-registry.md" {
+				t.Fatalf("expected output file pcs-skill-registry.md, got %s", res.OutputPath)
 			}
 			if res.CacheHit {
 				t.Error("expected first Refresh() call to have CacheHit = false")
@@ -89,6 +102,15 @@ func TestRefresh(t *testing.T) {
 				}
 			}
 
+			// Verify external .atl/skill-registry.md was untouched.
+			gotOther, err := os.ReadFile(legacyRegistry)
+			if err != nil {
+				t.Fatalf("read external skill-registry.md: %v", err)
+			}
+			if string(gotOther) != otherToolContent {
+				t.Errorf("external .atl/skill-registry.md was modified: got %q, want %q", string(gotOther), otherToolContent)
+			}
+
 			// Second call with identical inputs must hit the SHA-256 fast path.
 			res2, err := Refresh(rootDir, extras)
 			if err != nil {
@@ -99,6 +121,45 @@ func TestRefresh(t *testing.T) {
 			}
 			if res2.Hash != res.Hash {
 				t.Errorf("hash changed between identical runs: %s vs %s", res.Hash, res2.Hash)
+			}
+		})
+	}
+}
+
+func TestClassifyScopeCaseInsensitiveAndCustomProfile(t *testing.T) {
+	tests := []struct {
+		name           string
+		absRoot        string
+		skillDir       string
+		extraSkillDirs []string
+		want           string
+	}{
+		{
+			name:     "workspace path with different casing",
+			absRoot:  "/Users/Dev/Project",
+			skillDir: "/users/dev/project/.claude/skills",
+			want:     "workspace",
+		},
+		{
+			name:           "custom profile directory via extraSkillDirs",
+			absRoot:        "/Users/Dev/Project",
+			skillDir:       "/Users/Dev/my-custom-claude/skills",
+			extraSkillDirs: []string{"/users/dev/my-custom-claude/skills"},
+			want:           "profile",
+		},
+		{
+			name:     "default global .claude/skills directory",
+			absRoot:  "/Users/Dev/Project",
+			skillDir: "/Users/Dev/.claude/skills",
+			want:     "global",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyScope(tt.absRoot, tt.skillDir, tt.extraSkillDirs)
+			if got != tt.want {
+				t.Errorf("classifyScope(%q, %q, %v) = %q, want %q", tt.absRoot, tt.skillDir, tt.extraSkillDirs, got, tt.want)
 			}
 		})
 	}

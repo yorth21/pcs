@@ -12,14 +12,18 @@ Build the zero-dependency Go binary and install `pcs` (`--scope global` by defau
 # 1. Build the standalone Go CLI
 make build
 
-# 2. Install into the global Claude config (~/.claude, or $CLAUDE_CONFIG_DIR if set)
-./bin/pcs install --adapter react-shadcn --persona gentleman --with-mcp=true
+# 2. Safe default install into the global Claude config (~/.claude, or $CLAUDE_CONFIG_DIR if set)
+#    Writes CLAUDE.md markers, 5 native subagents, and skills without touching .claude.json or settings.json:
+./bin/pcs install --adapter react-shadcn --persona gentleman
+
+# Optional: also merge missing MCP servers (engram, context7, codegraph) and/or the skill-registry hook:
+./bin/pcs install --write-mcp-config --write-hook
 
 # Or install into a specific frontend repository (--scope workspace)
 ./bin/pcs install --scope workspace --target-dir /path/to/frontend-repo/.claude
 
 # Or install into an isolated profile (--scope profile) with sh / .cmd / .ps1 launchers
-./bin/pcs install --scope profile
+./bin/pcs install --scope profile --profile-dir ~/.claude-pcs
 
 # 3. Verify binaries, embedded brain, markers, native subagents, and skills
 ./bin/pcs doctor
@@ -29,13 +33,13 @@ make build
 
 | Command | Purpose |
 |---------|---------|
-| `pcs install [--scope global\|workspace\|profile] [--target-dir <dir>] [--adapter react-shadcn] [--persona gentleman\|neutral] [--with-mcp=true\|false] [--dry-run] [--json]` | Deploy `pcs` orchestrator & infrastructure markers (`pcs:*`), 5 native subagents, `pcs-core` + Stack Adapter skills, and MCP servers (`engram`, `context7`, `codegraph`); defaults to `global` (`~/.claude` or `$CLAUDE_CONFIG_DIR`) and respects `PCS_INSTALL_SCOPE` |
-| `pcs sync [--scope global\|workspace\|profile] [--target-dir <dir>] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and `pcs:*` markers using `.pcs-state.json` |
-| `pcs status [--scope global\|workspace\|profile] [--target-dir <dir>] [--json]` | Inspect installed `CLAUDE.md` markers (`pcs:*`), native subagents, skills, and MCP configuration |
+| `pcs install [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--adapter react-shadcn] [--persona gentleman\|neutral] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Deploy `pcs` orchestrator & infrastructure markers (`pcs:*`), 5 native subagents, and `pcs-core` + Stack Adapter skills. By default `--mcp-guidance=true`, `--write-mcp-config=false`, and `--write-hook=false` so existing `.claude.json` and `settings.json` files are never modified unless explicitly requested |
+| `pcs sync [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--adapter <name>] [--persona <name>] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and `pcs:*` markers using `.pcs-state.json` while honoring any explicit flag overrides |
+| `pcs status [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--json]` | Inspect installed `CLAUDE.md` markers (`pcs:*`), native subagents, skills, and MCP configuration |
 | `pcs doctor [--target-dir <dir>] [--json]` | Run diagnostic checks on `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation |
-| `pcs skill-registry refresh [--cwd <dir>] [--skills-dir <dir>] [--json]` | Scan `SKILL.md` frontmatter and write deterministic `.atl/skill-registry.md` with SHA-256 cache-hit header |
-| `pcs codegraph init [--cwd <dir>] [--json]` | Validate project root (refusing `$HOME`, `/`, `/tmp`, `/var/tmp`) and initialize `.codegraph/` index |
-| `pcs uninstall [--scope global\|workspace\|profile] [--target-dir <dir>] [--dry-run] [--json]` | Cleanly remove all 5 `pcs:*` markers, `pcs-*` native subagents, `pcs-*` skills, and profile launchers without touching user files |
+| `pcs skill-registry refresh [--cwd <dir>] [--skills-dir <dir>] [--json]` | Scan `SKILL.md` frontmatter and write deterministic `.atl/pcs-skill-registry.md` with SHA-256 cache-hit header |
+| `pcs codegraph init [--cwd <dir>] [--json]` | Validate project root (refusing `$HOME`, `/`, `os.TempDir()`, `/tmp`, `/var/tmp`) and initialize `.codegraph/` index |
+| `pcs uninstall [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--remove-mcp] [--dry-run] [--json]` | Cleanly remove all 5 `pcs:*` markers, `pcs-*` native subagents, `pcs-*` skills, `.atl/pcs-skill-registry.md`, and `pcs`-added MCP/hook deltas without touching user files |
 | `pcs version [--json]` | Print `pcs` CLI version |
 
 ---
@@ -100,16 +104,16 @@ flowchart LR
 pcs/
 ├── README.md                          # Executive overview and CLI quick path
 ├── AGENTS.md                          # Project skill, subagent, and CLI package registry
-├── Makefile                           # Build, test (-race), and vet targets
+├── Makefile                           # Build, test, test-race, and vet targets
 ├── go.mod                             # Zero-external-dependency Go module
 ├── embed.go                           # //go:embed all:brain docs/skill-style-guide.md
 ├── cmd/pcs/main.go                    # Standalone pcs CLI entrypoint
 ├── internal/
 │   ├── assets/                        # Embedded BrainFS accessors and pcs:* infrastructure blocks
 │   ├── marker/                        # Idempotent HTML-comment marker engine for CLAUDE.md
-│   ├── mcp/                           # Engram, Context7 & CodeGraph JSON merger/unmerger
+│   ├── mcp/                           # Engram, Context7 & CodeGraph JSON merger/unmerger with delta tracking
 │   ├── installer/                     # Multi-scope (global, workspace, profile) lifecycle engine
-│   ├── registry/                      # Deterministic .atl/skill-registry.md generator
+│   ├── registry/                      # Deterministic .atl/pcs-skill-registry.md generator
 │   ├── doctor/                        # Ecosystem binary, BrainFS, and installation verifier
 │   └── cli/                           # Subcommand router, codegraph init guard, and flag parser
 ├── docs/
@@ -142,14 +146,14 @@ pcs/
 
 ## Core vs. Stack Adapter Separation
 
-- **[`pcs-core`](file:///Users/yorth21/Developer/SideProjects/pcs/brain/skills/pcs-core/SKILL.md)**: 100% technology-agnostic product engineering rules. Contains zero framework couplings and zero external company references. Every rule is encoded as a self-contained engineering constraint.
-- **[`pcs-adapter-react-shadcn`](file:///Users/yorth21/Developer/SideProjects/pcs/brain/skills/pcs-adapter-react-shadcn/SKILL.md)**: Translates `pcs-core` Skeleton and Surface decisions into idiomatic React 19, TypeScript, Tailwind CSS v4, vanilla `shadcn/ui`, `radix-ui`, `@tanstack/react-router`, `@tanstack/react-query`, `@tanstack/react-table`, and `react-hook-form` + `zod`.
+- **[`pcs-core`](brain/skills/pcs-core/SKILL.md)**: 100% technology-agnostic product engineering rules. Contains zero framework couplings and zero external company references. Every rule is encoded as a self-contained engineering constraint.
+- **[`pcs-adapter-react-shadcn`](brain/skills/pcs-adapter-react-shadcn/SKILL.md)**: Translates `pcs-core` Skeleton and Surface decisions into idiomatic React 19, TypeScript, Tailwind CSS v4, vanilla `shadcn/ui`, `radix-ui`, `@tanstack/react-router`, `@tanstack/react-query`, `@tanstack/react-table`, and `react-hook-form` + `zod`.
 
 ---
 
 ## Quick Verification Checklist
 
 - [ ] Run `go test -v -race ./...` and `go vet ./...` to verify all CLI packages and embedded assets.
-- [ ] Read [`docs/architecture.md`](file:///Users/yorth21/Developer/SideProjects/pcs/docs/architecture.md) for the standalone architecture, `Engram` / `CodeGraph` / `Context7` integration, and CLI lifecycle internals.
-- [ ] Read [`docs/skill-style-guide.md`](file:///Users/yorth21/Developer/SideProjects/pcs/docs/skill-style-guide.md) before authoring or modifying any `SKILL.md`.
-- [ ] Inspect [`AGENTS.md`](file:///Users/yorth21/Developer/SideProjects/pcs/AGENTS.md) for the authoritative index of skills, orchestrator blocks, subagents, and Go packages.
+- [ ] Read [`docs/architecture.md`](docs/architecture.md) for the standalone architecture, `Engram` / `CodeGraph` / `Context7` integration, and CLI lifecycle internals.
+- [ ] Read [`docs/skill-style-guide.md`](docs/skill-style-guide.md) before authoring or modifying any `SKILL.md`.
+- [ ] Inspect [`AGENTS.md`](AGENTS.md) for the authoritative index of skills, orchestrator blocks, subagents, and Go packages.

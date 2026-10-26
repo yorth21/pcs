@@ -24,7 +24,7 @@ func TestCLISubcommands(t *testing.T) {
 			name:         "help command prints usage",
 			args:         []string{"help"},
 			wantExitCode: 0,
-			wantStdout:   []string{"Product Composition System (pcs)", "skill-registry refresh"},
+			wantStdout:   []string{"Product Composition System (pcs)", "skill-registry refresh", "--write-mcp-config", "--write-hook"},
 		},
 		{
 			name:         "version command text output",
@@ -40,27 +40,33 @@ func TestCLISubcommands(t *testing.T) {
 		},
 		{
 			name:         "install dry-run json output",
-			args:         []string{"install", "--scope", "profile", "--target-dir", profileDir, "--dry-run", "--json"},
+			args:         []string{"install", "--scope", "profile", "--profile-dir", profileDir, "--dry-run", "--json"},
 			wantExitCode: 0,
 			wantJSONKey:  "actions",
 		},
 		{
-			name:         "install profile scope succeeds",
-			args:         []string{"install", "--scope", "profile", "--target-dir", profileDir, "--persona", "gentleman", "--with-mcp=true"},
+			name:         "install profile scope succeeds with --write-mcp-config and --write-hook",
+			args:         []string{"install", "--scope", "profile", "--profile-dir", profileDir, "--persona", "gentleman", "--write-mcp-config", "--write-hook"},
 			wantExitCode: 0,
 			wantStdout:   []string{"pcs install completed", "claude-pcs"},
 		},
 		{
 			name:         "status command reports installed true",
-			args:         []string{"status", "--scope", "profile", "--target-dir", profileDir},
+			args:         []string{"status", "--scope", "profile", "--profile-dir", profileDir},
 			wantExitCode: 0,
 			wantStdout:   []string{"Installed:  true", "pcs:orchestrator: true"},
 		},
 		{
-			name:         "sync command refreshes installed profile",
-			args:         []string{"sync", "--scope", "profile", "--target-dir", profileDir, "--json"},
+			name:         "sync command refreshes installed profile and supports flag overrides",
+			args:         []string{"sync", "--scope", "profile", "--profile-dir", profileDir, "--persona", "neutral", "--mcp-guidance=false", "--json"},
 			wantExitCode: 0,
 			wantJSONKey:  "operation",
+		},
+		{
+			name:         "status after sync reflects overridden persona and removed mcp-guidance markers",
+			args:         []string{"status", "--scope", "profile", "--profile-dir", profileDir},
+			wantExitCode: 0,
+			wantStdout:   []string{"Persona:    neutral", "pcs:codegraph-guidance: false", "pcs:engram-protocol: false"},
 		},
 		{
 			name:         "doctor command verifies installed target dir",
@@ -69,14 +75,14 @@ func TestCLISubcommands(t *testing.T) {
 			wantStdout:   []string{"Verdict: HEALTHY"},
 		},
 		{
-			name:         "skill-registry refresh generates .atl/skill-registry.md",
+			name:         "skill-registry refresh generates .atl/pcs-skill-registry.md",
 			args:         []string{"skill-registry", "refresh", "--cwd", fakeHome, "--skills-dir", filepath.Join(profileDir, "skills")},
 			wantExitCode: 0,
-			wantStdout:   []string{".atl/skill-registry.md", "2 skills"},
+			wantStdout:   []string{"pcs-skill-registry.md", "2 skills"},
 		},
 		{
 			name:         "uninstall command removes pcs artifacts cleanly",
-			args:         []string{"uninstall", "--scope", "profile", "--target-dir", profileDir},
+			args:         []string{"uninstall", "--scope", "profile", "--profile-dir", profileDir},
 			wantExitCode: 0,
 			wantStdout:   []string{"pcs uninstall completed"},
 		},
@@ -124,7 +130,7 @@ func TestCLISubcommands(t *testing.T) {
 }
 
 func TestCLIDefaultGlobalScopeAndEnvOverrides(t *testing.T) {
-	t.Run("default install without flags uses global scope (<HomeDir>/.claude)", func(t *testing.T) {
+	t.Run("default install without flags uses global scope (<HomeDir>/.claude) and does not touch .claude.json", func(t *testing.T) {
 		fakeHome := t.TempDir()
 		t.Setenv("PCS_INSTALL_SCOPE", "")
 		t.Setenv("CLAUDE_CONFIG_DIR", "")
@@ -149,6 +155,9 @@ func TestCLIDefaultGlobalScopeAndEnvOverrides(t *testing.T) {
 		wantTarget := filepath.Join(fakeHome, ".claude")
 		if rep["target_dir"] != wantTarget {
 			t.Errorf("target_dir = %v, want %s", rep["target_dir"], wantTarget)
+		}
+		if _, err := os.Stat(filepath.Join(fakeHome, ".claude.json")); !os.IsNotExist(err) {
+			t.Errorf("expected default install not to create .claude.json without --write-mcp-config")
 		}
 	})
 
@@ -208,9 +217,6 @@ func TestCLIDefaultGlobalScopeAndEnvOverrides(t *testing.T) {
 func TestCLICodeGraphInit(t *testing.T) {
 	fakeHome := t.TempDir()
 	validRepo := filepath.Join(fakeHome, "projects", "frontend-app")
-	if err := filepath.WalkDir(fakeHome, func(string, os.DirEntry, error) error { return nil }); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(validRepo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -245,6 +251,12 @@ func TestCLICodeGraphInit(t *testing.T) {
 			args:         []string{"codegraph", "init", "--cwd", "/"},
 			wantExitCode: 1,
 			wantStderr:   "cannot initialize CodeGraph at filesystem root",
+		},
+		{
+			name:         "refuses to initialize in system temporary directory os.TempDir()",
+			args:         []string{"codegraph", "init", "--cwd", os.TempDir()},
+			wantExitCode: 1,
+			wantStderr:   "cannot initialize CodeGraph in temporary directory",
 		},
 		{
 			name:         "refuses to initialize in /tmp",

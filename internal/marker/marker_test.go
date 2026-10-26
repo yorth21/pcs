@@ -42,6 +42,13 @@ func TestUpsertBlock(t *testing.T) {
 			blockContent: "New content v2",
 			wantExact:    "# Header\n\n<!-- pcs:orchestrator -->\nNew content v2\n<!-- /pcs:orchestrator -->\n\n# Footer\n",
 		},
+		{
+			name:         "preserves user CRLF and triple newlines outside managed blocks",
+			initial:      "# Windows Rules\r\n\r\n\r\nKeep spacing intact.\r\n",
+			markerID:     "pcs:orchestrator",
+			blockContent: "Line 1\nLine 2",
+			wantExact:    "# Windows Rules\r\n\r\n\r\nKeep spacing intact.\r\n\r\n<!-- pcs:orchestrator -->\r\nLine 1\r\nLine 2\r\n<!-- /pcs:orchestrator -->\r\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -128,6 +135,49 @@ func TestRemoveBlock(t *testing.T) {
 			}
 			if strings.Contains(got, "\n\n\n") {
 				t.Errorf("RemoveBlock() left triple newlines in:\n%q", got)
+			}
+		})
+	}
+}
+
+func TestUpsertAndRemoveRoundTripByteForByte(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial string
+		markers []string
+	}{
+		{
+			name:    "LF file with deliberate triple newlines and ASCII art",
+			initial: "# Custom Header\n\n\n```text\n+---+\n|   |\n+---+\n```\n\nFooter line.\n",
+			markers: []string{"pcs:persona", "pcs:orchestrator", "pcs:ux-routing", "pcs:codegraph-guidance", "pcs:engram-protocol"},
+		},
+		{
+			name:    "CRLF file with deliberate triple CRLF sequences",
+			initial: "# Windows Handbook\r\n\r\n\r\nSection A\r\n\r\nSection B\r\n",
+			markers: []string{"pcs:persona", "pcs:orchestrator", "pcs:ux-routing"},
+		},
+		{
+			name:    "empty initial file",
+			initial: "",
+			markers: []string{"pcs:orchestrator", "pcs:ux-routing"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cur := tt.initial
+			for _, m := range tt.markers {
+				cur = UpsertBlock(cur, m, "Content for "+m)
+			}
+			for _, m := range tt.markers {
+				var removed bool
+				cur, removed = RemoveBlock(cur, m)
+				if !removed {
+					t.Fatalf("expected RemoveBlock(%q) to report true", m)
+				}
+			}
+			if cur != tt.initial {
+				t.Fatalf("round-trip mismatch:\ngot:  %q\nwant: %q", cur, tt.initial)
 			}
 		})
 	}

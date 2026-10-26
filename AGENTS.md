@@ -6,7 +6,7 @@ This file is the authoritative registry of orchestrator blocks, native subagents
 
 ## 1. Repository Governance & Hard Rules
 
-1. **Normative Skill Style Guide**: Before creating or updating any skill in `brain/skills/`, read and obey [`docs/skill-style-guide.md`](file:///Users/yorth21/Developer/SideProjects/pcs/docs/skill-style-guide.md).
+1. **Normative Skill Style Guide**: Before creating or updating any skill in `brain/skills/`, read and obey [`docs/skill-style-guide.md`](docs/skill-style-guide.md).
 2. **Artifact Language Contract**: Every file, prompt, specification, template, comment, UI string, Go identifier, test, and code blueprint in this repository MUST be written in clear, rigorous, professional English. Never inject regional slang or non-English identifiers into any artifact.
 3. **Zero External Company Names in `brain/` and CLI**: Never reference external product companies as shorthand for design quality. Encode every UX principle, cognitive law, heuristic, and visual rule directly as an explicit, testable engineering constraint. (Technical library and tool dependencies such as React, TypeScript, Tailwind CSS, `shadcn/ui`, Radix UI, TanStack, React Hook Form, Zod, Playwright, Engram, Context7, and CodeGraph are permitted where technically relevant.)
 4. **Go Testing & Zero-Dependency Discipline**: The Go CLI (`cmd/pcs`, `internal/**`) uses only the Go standard library (`go.mod` has zero external dependencies). All filesystem tests MUST use `t.TempDir()` and pass `go test -v -race ./...` and `go vet ./...`.
@@ -24,7 +24,7 @@ This file is the authoritative registry of orchestrator blocks, native subagents
 
 | Shared File | Consumer | Purpose | Exact Path |
 |-------------|----------|---------|------------|
-| `pcs-phase-common` | All `pcs-*` subagents | Skill loading hierarchy, dual artifact retrieval/persistence (`pcs/specs/`, `pcs/tasks/`, Engram `pcs/<feature>/*`), 0–4 severity scale, and Result Envelope contract | `brain/skills/_shared/pcs-phase-common.md` |
+| `pcs-phase-common` | All `pcs-*` subagents | Skill loading hierarchy (`.atl/pcs-skill-registry.md`), dual artifact retrieval/persistence (`pcs/specs/`, `pcs/tasks/`, Engram `pcs/<feature>/*`), CodeGraph protocol, 0–4 severity scale, and Result Envelope contract | `brain/skills/_shared/pcs-phase-common.md` |
 
 ---
 
@@ -58,9 +58,9 @@ This file is the authoritative registry of orchestrator blocks, native subagents
 |---------|----------------|------------|
 | `pcs` (root) | Embeds `all:brain` and `docs/skill-style-guide.md` into `BrainFS` via `//go:embed` | `embed.go` |
 | `internal/assets` | Typed accessors for embedded orchestrator blocks, native subagents, skills, and `pcs:*` infrastructure blocks (`pcs:codegraph-guidance`, `pcs:persona`, `pcs:engram-protocol`) | `internal/assets/assets.go` |
-| `internal/marker` | Idempotent HTML-comment section manager (`UpsertBlock`, `RemoveBlock`, `HasBlock`, `ExtractBlock`) for `CLAUDE.md` | `internal/marker/marker.go` |
-| `internal/mcp` | Atomic JSON merger/unmerger with `.bak` backups for `engram`, `context7`, and `codegraph` MCP servers in `.claude.json` and permissions/hooks in `settings.json` | `internal/mcp/mcp.go` |
-| `internal/installer` | Multi-scope (`global` default respecting `$CLAUDE_CONFIG_DIR` and `$PCS_INSTALL_SCOPE`, `workspace`, and `profile`) installer, syncer, uninstaller, status inspector, `.pcs-state.json` tracker, and cross-platform (`sh`, `.cmd`, `.ps1`) launcher generator | `internal/installer/installer.go` |
-| `internal/registry` | Deterministic `.atl/skill-registry.md` table generator with YAML frontmatter parser and SHA-256 content hash fast path | `internal/registry/registry.go` |
+| `internal/marker` | Idempotent, CRLF-aware HTML-comment section manager (`UpsertBlock`, `RemoveBlock`, `HasBlock`, `ExtractBlock`) for `CLAUDE.md` | `internal/marker/marker.go` |
+| `internal/mcp` | Atomic JSON merger/unmerger with one-time `.pre-pcs.bak` backups and delta tracking for `engram`, `context7`, and `codegraph` MCP servers in `.claude.json` and permissions/hooks in `settings.json` | `internal/mcp/mcp.go` |
+| `internal/installer` | Multi-scope (`global` default respecting `$CLAUDE_CONFIG_DIR` and `$PCS_INSTALL_SCOPE`, `workspace`, and `profile` respecting `--profile-dir` and `$CLAUDE_CONFIG_DIR`) installer, syncer, uninstaller, status inspector, `.pcs-state.json` tracker, and cross-platform (`sh`, `.cmd`, `.ps1`) launcher generator | `internal/installer/installer.go` |
+| `internal/registry` | Deterministic `.atl/pcs-skill-registry.md` table generator with YAML frontmatter parser and SHA-256 content hash fast path | `internal/registry/registry.go` |
 | `internal/doctor` | Ecosystem health verifier for `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation state | `internal/doctor/doctor.go` |
 | `internal/cli` | CLI command router (`install`, `sync`, `uninstall`, `status`, `doctor`, `skill-registry refresh`, `codegraph init`, `version`, `help`) | `internal/cli/cli.go` |

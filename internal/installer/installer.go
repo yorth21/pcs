@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -28,30 +29,50 @@ const (
 	AgentOwnershipFileName = ".pcs-native-agent-ownership.json"
 )
 
+// BoolPtr returns a pointer to b for configuring optional boolean flags.
+func BoolPtr(b bool) *bool {
+	return &b
+}
+
 // Options configures an Install, Sync, Uninstall, or Status operation.
 type Options struct {
 	Scope           string
 	TargetDir       string
+	ProfileDir      string
 	HomeDir         string
 	ClaudeConfigDir string
 	Adapter         string
 	Persona         string
+	MCPGuidance     *bool
+	WriteMCPConfig  bool
+	WriteHook       bool
 	WithMCP         bool
 	DryRun          bool
 	RemoveMCP       bool
+	FlagOverrides   map[string]bool
 }
 
 // State persists the installed pcs configuration in <target-dir>/.pcs-state.json.
 type State struct {
-	Version      string   `json:"version"`
-	InstalledAt  string   `json:"installed_at"`
-	Scope        string   `json:"scope"`
-	TargetDir    string   `json:"target_dir"`
-	Adapter      string   `json:"adapter"`
-	Persona      string   `json:"persona"`
-	WithMCP      bool     `json:"with_mcp"`
-	EnabledMCPs  []string `json:"enabled_mcps"`
-	ManagedFiles []string `json:"managed_files"`
+	Version             string   `json:"version"`
+	InstalledAt         string   `json:"installed_at"`
+	Scope               string   `json:"scope"`
+	TargetDir           string   `json:"target_dir"`
+	Adapter             string   `json:"adapter"`
+	Persona             string   `json:"persona"`
+	MCPGuidance         bool     `json:"mcp_guidance"`
+	WriteMCPConfig      bool     `json:"write_mcp_config"`
+	WriteHook           bool     `json:"write_hook"`
+	WithMCP             bool     `json:"with_mcp"`
+	EnabledMCPs         []string `json:"enabled_mcps"`
+	AddedMCPServers     []string `json:"added_mcp_servers,omitempty"`
+	AddedPermissions    []string `json:"added_permissions,omitempty"`
+	AddedPlugins        []string `json:"added_plugins,omitempty"`
+	AddedHook           bool     `json:"added_hook,omitempty"`
+	CreatedClaudeMD     bool     `json:"created_claude_md,omitempty"`
+	CreatedClaudeJSON   bool     `json:"created_claude_json,omitempty"`
+	CreatedSettingsJSON bool     `json:"created_settings_json,omitempty"`
+	ManagedFiles        []string `json:"managed_files"`
 }
 
 // AgentOwnership tracks which native subagent files in agents/ are owned by pcs.
@@ -69,15 +90,18 @@ type Action struct {
 
 // Report summarizes an Install, Sync, or Uninstall run.
 type Report struct {
-	Operation   string   `json:"operation"`
-	Scope       string   `json:"scope"`
-	TargetDir   string   `json:"target_dir"`
-	Adapter     string   `json:"adapter"`
-	Persona     string   `json:"persona"`
-	WithMCP     bool     `json:"with_mcp"`
-	DryRun      bool     `json:"dry_run"`
-	LauncherCmd string   `json:"launcher_cmd,omitempty"`
-	Actions     []Action `json:"actions"`
+	Operation      string   `json:"operation"`
+	Scope          string   `json:"scope"`
+	TargetDir      string   `json:"target_dir"`
+	Adapter        string   `json:"adapter"`
+	Persona        string   `json:"persona"`
+	MCPGuidance    bool     `json:"mcp_guidance"`
+	WriteMCPConfig bool     `json:"write_mcp_config"`
+	WriteHook      bool     `json:"write_hook"`
+	WithMCP        bool     `json:"with_mcp"`
+	DryRun         bool     `json:"dry_run"`
+	LauncherCmd    string   `json:"launcher_cmd,omitempty"`
+	Actions        []Action `json:"actions"`
 }
 
 // StatusReport summarizes the health and installed state of a target directory.
@@ -105,6 +129,46 @@ type resolvedLayout struct {
 	skillsDir        string
 	launcherPath     string
 	workspaceRoot    string
+}
+
+func normalizeOptions(opts *Options) {
+	if opts.FlagOverrides["with-mcp"] {
+		if opts.WithMCP {
+			if !opts.FlagOverrides["mcp-guidance"] {
+				opts.MCPGuidance = BoolPtr(true)
+			}
+			if !opts.FlagOverrides["write-mcp-config"] {
+				opts.WriteMCPConfig = true
+			}
+			if !opts.FlagOverrides["write-hook"] {
+				opts.WriteHook = true
+			}
+		} else {
+			if !opts.FlagOverrides["mcp-guidance"] {
+				opts.MCPGuidance = BoolPtr(false)
+			}
+			if !opts.FlagOverrides["write-mcp-config"] {
+				opts.WriteMCPConfig = false
+			}
+			if !opts.FlagOverrides["write-hook"] {
+				opts.WriteHook = false
+			}
+		}
+	} else if opts.WithMCP {
+		if opts.MCPGuidance == nil && !opts.FlagOverrides["mcp-guidance"] {
+			opts.MCPGuidance = BoolPtr(true)
+		}
+		if !opts.FlagOverrides["write-mcp-config"] {
+			opts.WriteMCPConfig = true
+		}
+		if !opts.FlagOverrides["write-hook"] {
+			opts.WriteHook = true
+		}
+	}
+	if opts.MCPGuidance == nil {
+		opts.MCPGuidance = BoolPtr(true)
+	}
+	opts.WithMCP = opts.WriteMCPConfig && opts.WriteHook && *opts.MCPGuidance
 }
 
 func resolveLayout(opts Options) (*resolvedLayout, error) {
@@ -137,12 +201,19 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 		claudeConfigDir = strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
 	}
 
+	profileDir := strings.TrimSpace(opts.ProfileDir)
 	targetDir := strings.TrimSpace(opts.TargetDir)
 	usedCustomClaudeConfigDir := false
 	if targetDir == "" {
 		switch scope {
 		case ScopeProfile:
-			targetDir = filepath.Join(absHome, ".claude-pcs")
+			if profileDir != "" {
+				targetDir = profileDir
+			} else if claudeConfigDir != "" {
+				targetDir = claudeConfigDir
+			} else {
+				targetDir = filepath.Join(absHome, ".claude-pcs")
+			}
 		case ScopeGlobal:
 			if claudeConfigDir != "" {
 				targetDir = claudeConfigDir
@@ -208,11 +279,13 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 // Install deploys the pcs orchestrator blocks, native subagents, core & adapter
 // skills, and optional MCP configuration into the target scope.
 func Install(opts Options) (*Report, error) {
+	normalizeOptions(&opts)
 	return applyInstall(opts, "install")
 }
 
-// Sync re-reads .pcs-state.json (when present) and refreshes all embedded
-// brain files, CLAUDE.md markers, MCP wiring, and skill registries.
+// Sync re-reads .pcs-state.json (when present), merges any explicit CLI flag
+// overrides, and refreshes all embedded brain files, CLAUDE.md markers, MCP
+// wiring, and skill registries.
 func Sync(opts Options) (*Report, error) {
 	layout, err := resolveLayout(opts)
 	if err != nil {
@@ -220,17 +293,28 @@ func Sync(opts Options) (*Report, error) {
 	}
 	statePath := filepath.Join(layout.targetDir, StateFileName)
 	if saved, err := readState(statePath); err == nil && saved != nil {
-		if opts.Scope == "" {
+		if !opts.FlagOverrides["scope"] && opts.Scope == "" {
 			opts.Scope = saved.Scope
 		}
-		if opts.Adapter == "" {
+		if !opts.FlagOverrides["adapter"] && opts.Adapter == "" {
 			opts.Adapter = saved.Adapter
 		}
-		if opts.Persona == "" {
+		if !opts.FlagOverrides["persona"] && opts.Persona == "" {
 			opts.Persona = saved.Persona
 		}
-		opts.WithMCP = saved.WithMCP
+		if !opts.FlagOverrides["with-mcp"] {
+			if !opts.FlagOverrides["mcp-guidance"] && opts.MCPGuidance == nil {
+				opts.MCPGuidance = BoolPtr(saved.MCPGuidance)
+			}
+			if !opts.FlagOverrides["write-mcp-config"] {
+				opts.WriteMCPConfig = saved.WriteMCPConfig
+			}
+			if !opts.FlagOverrides["write-hook"] {
+				opts.WriteHook = saved.WriteHook
+			}
+		}
 	}
+	normalizeOptions(&opts)
 	return applyInstall(opts, "sync")
 }
 
@@ -240,6 +324,10 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	}
 	if strings.TrimSpace(opts.Persona) == "" {
 		opts.Persona = DefaultPersona
+	}
+	mcpGuidance := true
+	if opts.MCPGuidance != nil {
+		mcpGuidance = *opts.MCPGuidance
 	}
 
 	adapterDirName, err := assets.AdapterSkillDirName(opts.Adapter)
@@ -280,14 +368,27 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		return nil, err
 	}
 
+	// Substitute custom profile/installed skills directory into prompt assets when non-default.
+	resolvedSkillsSlash := filepath.ToSlash(layout.skillsDir)
+	if layout.scope == ScopeProfile {
+		orchBlock = strings.ReplaceAll(orchBlock, "~/.claude-pcs/skills", resolvedSkillsSlash)
+		sharedContract = []byte(strings.ReplaceAll(string(sharedContract), "~/.claude-pcs/skills", resolvedSkillsSlash))
+	}
+
+	statePath := filepath.Join(layout.targetDir, StateFileName)
+	prevState, _ := readState(statePath)
+
 	report := &Report{
-		Operation: opName,
-		Scope:     layout.scope,
-		TargetDir: layout.targetDir,
-		Adapter:   opts.Adapter,
-		Persona:   opts.Persona,
-		WithMCP:   opts.WithMCP,
-		DryRun:    opts.DryRun,
+		Operation:      opName,
+		Scope:          layout.scope,
+		TargetDir:      layout.targetDir,
+		Adapter:        opts.Adapter,
+		Persona:        opts.Persona,
+		MCPGuidance:    mcpGuidance,
+		WriteMCPConfig: opts.WriteMCPConfig,
+		WriteHook:      opts.WriteHook,
+		WithMCP:        opts.WithMCP,
+		DryRun:         opts.DryRun,
 	}
 
 	var managedFiles []string
@@ -304,34 +405,58 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 
 	// 1. Compose CLAUDE.md with pcs-owned infrastructure, persona, orchestrator, and routing markers.
 	existingClaudeMD := ""
+	claudeMDExisted := false
+	claudeMDPerm := os.FileMode(0o644)
+	if info, statErr := os.Stat(layout.claudeMDPath); statErr == nil {
+		claudeMDPerm = info.Mode().Perm()
+	}
 	if b, readErr := os.ReadFile(layout.claudeMDPath); readErr == nil {
 		existingClaudeMD = string(b)
+		claudeMDExisted = true
 	}
+
 	updatedClaudeMD := existingClaudeMD
-	if opts.WithMCP {
+	if mcpGuidance {
 		updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerCodeGraphGuidance, assets.CodeGraphGuidanceBlock())
+	} else {
+		updatedClaudeMD, _ = marker.RemoveBlock(updatedClaudeMD, assets.MarkerCodeGraphGuidance)
 	}
 	updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerPersona, personaBlock)
-	if opts.WithMCP {
+	if mcpGuidance {
 		updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerEngramProtocol, assets.EngramProtocolBlock())
+	} else {
+		updatedClaudeMD, _ = marker.RemoveBlock(updatedClaudeMD, assets.MarkerEngramProtocol)
 	}
 	updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerOrchestrator, orchBlock)
 	updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerUXRouting, routingBlock)
 
 	if !opts.DryRun {
-		if err := writeFileCreatingDirs(layout.claudeMDPath, []byte(updatedClaudeMD), 0o644); err != nil {
+		if claudeMDExisted {
+			if err := mcp.WritePrePCSBackupOnce(layout.claudeMDPath, []byte(existingClaudeMD), claudeMDPerm); err != nil {
+				return nil, err
+			}
+		}
+		if err := writeFileCreatingDirs(layout.claudeMDPath, []byte(updatedClaudeMD), claudeMDPerm); err != nil {
 			return nil, err
 		}
 	}
-	recordFile("upsert-markers", layout.claudeMDPath, "pcs:codegraph-guidance, pcs:persona, pcs:engram-protocol, pcs:orchestrator, pcs:ux-routing")
+	markerSummary := "pcs:persona, pcs:orchestrator, pcs:ux-routing"
+	if mcpGuidance {
+		markerSummary = "pcs:codegraph-guidance, pcs:persona, pcs:engram-protocol, pcs:orchestrator, pcs:ux-routing"
+	}
+	recordFile("upsert-markers", layout.claudeMDPath, markerSummary)
 
 	// 2. Write 5 native subagents and ownership manifest.
 	var agentNames []string
 	for _, agent := range agentsList {
 		dst := filepath.Join(layout.agentsDir, agent.RelPath)
 		agentNames = append(agentNames, agent.RelPath)
+		content := agent.Content
+		if layout.scope == ScopeProfile {
+			content = []byte(strings.ReplaceAll(string(content), "~/.claude-pcs/skills", resolvedSkillsSlash))
+		}
 		if !opts.DryRun {
-			if err := writeFileCreatingDirs(dst, agent.Content, 0o644); err != nil {
+			if err := writeFileCreatingDirs(dst, content, 0o644); err != nil {
 				return nil, err
 			}
 		}
@@ -380,20 +505,70 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	}
 	_ = adapterDirName
 
-	// 4. Configure MCP servers (engram, context7, codegraph) and settings.json when WithMCP is true.
+	// 4. Configure MCP servers (.claude.json) and/or settings.json only when explicitly requested.
 	var enabledMCPs []string
-	if opts.WithMCP {
+	var addedMCPServers []string
+	var addedPermissions []string
+	var addedPlugins []string
+	addedHook := false
+	createdClaudeMD := !claudeMDExisted
+	createdClaudeJSON := false
+	createdSettingsJSON := false
+
+	if prevState != nil {
+		addedMCPServers = slices.Clone(prevState.AddedMCPServers)
+		addedPermissions = slices.Clone(prevState.AddedPermissions)
+		addedPlugins = slices.Clone(prevState.AddedPlugins)
+		addedHook = prevState.AddedHook
+		createdClaudeMD = prevState.CreatedClaudeMD
+		createdClaudeJSON = prevState.CreatedClaudeJSON
+		createdSettingsJSON = prevState.CreatedSettingsJSON
+	}
+
+	if opts.WriteMCPConfig {
 		enabledMCPs = slices.Clone(mcp.DefaultComponents)
 		if !opts.DryRun {
-			if err := mcp.MergeClaudeJSON(layout.claudeJSONPath, enabledMCPs); err != nil {
+			claudeRes, err := mcp.MergeClaudeJSONWithDelta(layout.claudeJSONPath, enabledMCPs)
+			if err != nil {
 				return nil, err
 			}
-			if err := mcp.MergeSettingsJSON(layout.settingsJSONPath, enabledMCPs, layout.targetDir); err != nil {
-				return nil, err
+			if claudeRes.CreatedFile {
+				createdClaudeJSON = true
+			}
+			for _, s := range claudeRes.AddedServers {
+				if !slices.Contains(addedMCPServers, s) {
+					addedMCPServers = append(addedMCPServers, s)
+				}
 			}
 		}
 		recordFile("merge-mcp", layout.claudeJSONPath, strings.Join(enabledMCPs, ", "))
-		recordFile("merge-settings", layout.settingsJSONPath, "permissions.allow, enabledPlugins, UserPromptSubmit hook")
+	}
+
+	if opts.WriteMCPConfig || opts.WriteHook {
+		components := slices.Clone(mcp.DefaultComponents)
+		if !opts.DryRun {
+			settingsRes, err := mcp.MergeSettingsJSONWithDelta(layout.settingsJSONPath, components, layout.targetDir, opts.WriteMCPConfig, opts.WriteHook)
+			if err != nil {
+				return nil, err
+			}
+			if settingsRes.CreatedFile {
+				createdSettingsJSON = true
+			}
+			for _, p := range settingsRes.AddedPermissions {
+				if !slices.Contains(addedPermissions, p) {
+					addedPermissions = append(addedPermissions, p)
+				}
+			}
+			for _, pl := range settingsRes.AddedPlugins {
+				if !slices.Contains(addedPlugins, pl) {
+					addedPlugins = append(addedPlugins, pl)
+				}
+			}
+			if settingsRes.AddedHook {
+				addedHook = true
+			}
+		}
+		recordFile("merge-settings", layout.settingsJSONPath, "settings.json update")
 	}
 
 	// 5. In profile scope, create cross-platform launchers (POSIX sh, Windows .cmd, and PowerShell .ps1).
@@ -402,7 +577,8 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		cmdPath := layout.launcherPath + ".cmd"
 		cmdScript := fmt.Sprintf("@echo off\r\nset \"CLAUDE_CONFIG_DIR=%s\"\r\nclaude %%*\r\n", layout.targetDir)
 		ps1Path := layout.launcherPath + ".ps1"
-		ps1Script := fmt.Sprintf("$env:CLAUDE_CONFIG_DIR = %q\n& claude @args\n", layout.targetDir)
+		escapedTargetForPS := strings.ReplaceAll(layout.targetDir, "'", "''")
+		ps1Script := fmt.Sprintf("$env:CLAUDE_CONFIG_DIR = '%s'\n& claude @args\n", escapedTargetForPS)
 
 		if !opts.DryRun {
 			if err := writeFileCreatingDirs(layout.launcherPath, []byte(posixScript), 0o755); err != nil {
@@ -415,35 +591,48 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 				return nil, err
 			}
 		}
-		report.LauncherCmd = fmt.Sprintf("CLAUDE_CONFIG_DIR=%q claude", layout.targetDir)
+		if runtime.GOOS == "windows" {
+			report.LauncherCmd = fmt.Sprintf("$env:CLAUDE_CONFIG_DIR='%s'; claude", escapedTargetForPS)
+		} else {
+			report.LauncherCmd = fmt.Sprintf("CLAUDE_CONFIG_DIR=%q claude", layout.targetDir)
+		}
 		recordFile("write-launcher", layout.launcherPath, "POSIX sh profile launcher")
 		recordFile("write-launcher", cmdPath, "Windows cmd profile launcher")
 		recordFile("write-launcher", ps1Path, "PowerShell profile launcher")
 	}
 
-	// 6. In workspace scope, refresh <workspace>/.atl/skill-registry.md immediately.
+	// 6. In workspace scope, refresh <workspace>/.atl/pcs-skill-registry.md immediately.
 	if layout.scope == ScopeWorkspace && layout.workspaceRoot != "" {
-		regPath := filepath.Join(layout.workspaceRoot, ".atl", "skill-registry.md")
+		regPath := filepath.Join(layout.workspaceRoot, ".atl", registry.RegistryFileName)
 		if !opts.DryRun {
 			if _, err := registry.Refresh(layout.workspaceRoot, []string{layout.skillsDir}); err != nil {
 				return nil, err
 			}
 		}
-		recordFile("refresh-skill-registry", regPath, ".atl/skill-registry.md")
+		recordFile("refresh-skill-registry", regPath, ".atl/"+registry.RegistryFileName)
 	}
 
 	// 7. Persist .pcs-state.json.
-	statePath := filepath.Join(layout.targetDir, StateFileName)
 	state := State{
-		Version:      Version,
-		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
-		Scope:        layout.scope,
-		TargetDir:    layout.targetDir,
-		Adapter:      opts.Adapter,
-		Persona:      opts.Persona,
-		WithMCP:      opts.WithMCP,
-		EnabledMCPs:  enabledMCPs,
-		ManagedFiles: managedFiles,
+		Version:             Version,
+		InstalledAt:         time.Now().UTC().Format(time.RFC3339),
+		Scope:               layout.scope,
+		TargetDir:           layout.targetDir,
+		Adapter:             opts.Adapter,
+		Persona:             opts.Persona,
+		MCPGuidance:         mcpGuidance,
+		WriteMCPConfig:      opts.WriteMCPConfig,
+		WriteHook:           opts.WriteHook,
+		WithMCP:             opts.WithMCP,
+		EnabledMCPs:         enabledMCPs,
+		AddedMCPServers:     addedMCPServers,
+		AddedPermissions:    addedPermissions,
+		AddedPlugins:        addedPlugins,
+		AddedHook:           addedHook,
+		CreatedClaudeMD:     createdClaudeMD,
+		CreatedClaudeJSON:   createdClaudeJSON,
+		CreatedSettingsJSON: createdSettingsJSON,
+		ManagedFiles:        managedFiles,
 	}
 	if !opts.DryRun {
 		if err := writeJSONFile(statePath, state); err != nil {
@@ -467,6 +656,9 @@ func Uninstall(opts Options) (*Report, error) {
 		return nil, err
 	}
 
+	statePath := filepath.Join(layout.targetDir, StateFileName)
+	savedState, _ := readState(statePath)
+
 	report := &Report{
 		Operation: "uninstall",
 		Scope:     layout.scope,
@@ -474,7 +666,11 @@ func Uninstall(opts Options) (*Report, error) {
 		DryRun:    opts.DryRun,
 	}
 
-	// 1. Remove all 5 pcs:* markers from CLAUDE.md while preserving any user or third-party content.
+	// 1. Remove all 5 pcs:* markers from CLAUDE.md while preserving any user or third-party content byte-for-byte.
+	claudeMDPerm := os.FileMode(0o644)
+	if info, statErr := os.Stat(layout.claudeMDPath); statErr == nil {
+		claudeMDPerm = info.Mode().Perm()
+	}
 	if b, err := os.ReadFile(layout.claudeMDPath); err == nil {
 		content := string(b)
 		updated := content
@@ -488,9 +684,14 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 		if anyRemoved {
 			if !opts.DryRun {
-				if err := os.WriteFile(layout.claudeMDPath, []byte(updated), 0o644); err != nil {
-					return nil, fmt.Errorf("update %s: %w", layout.claudeMDPath, err)
+				if savedState != nil && savedState.CreatedClaudeMD && strings.TrimSpace(updated) == "" {
+					_ = os.Remove(layout.claudeMDPath)
+				} else {
+					if err := os.WriteFile(layout.claudeMDPath, []byte(updated), claudeMDPerm); err != nil {
+						return nil, fmt.Errorf("update %s: %w", layout.claudeMDPath, err)
+					}
 				}
+				_ = os.Remove(layout.claudeMDPath + mcp.PrePCSBackupSuffix)
 			}
 			report.Actions = append(report.Actions, Action{
 				Operation: "remove-markers",
@@ -564,17 +765,44 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 	}
 
-	// 4. Unmerge pcs hooks (and MCP servers if RemoveMCP is true or in isolated profile mode).
-	onlyPCSOwned := !opts.RemoveMCP && layout.scope != ScopeProfile
+	// 4. Unmerge pcs-added MCP entries and hooks using saved state delta (or ForceRemoveAllMCP when --remove-mcp is set).
+	delta := mcp.UnmergeDelta{
+		ForceRemoveAllMCP: opts.RemoveMCP,
+	}
+	if savedState != nil {
+		delta.CreatedClaudeJSON = savedState.CreatedClaudeJSON
+		delta.CreatedSettingsJSON = savedState.CreatedSettingsJSON
+		delta.AddedMCPServers = slices.Clone(savedState.AddedMCPServers)
+		delta.AddedPermissions = slices.Clone(savedState.AddedPermissions)
+		delta.AddedPlugins = slices.Clone(savedState.AddedPlugins)
+		delta.AddedHook = savedState.AddedHook
+	} else if layout.scope == ScopeProfile {
+		delta.ForceRemoveAllMCP = true
+	}
 	if !opts.DryRun {
-		_ = mcp.UnmergeMCP(layout.claudeJSONPath, layout.settingsJSONPath, onlyPCSOwned)
+		_ = mcp.UnmergeWithDelta(layout.claudeJSONPath, layout.settingsJSONPath, delta)
 	}
 	report.Actions = append(report.Actions, Action{
 		Operation: "unmerge-mcp-hooks",
 		Path:      layout.settingsJSONPath,
 	})
 
-	// 5. Remove cross-platform profile launchers if present and clean up bin/ if empty.
+	// 5. In workspace scope, remove <workspace>/.atl/pcs-skill-registry.md (and .atl/ if empty).
+	if layout.scope == ScopeWorkspace && layout.workspaceRoot != "" {
+		regPath := filepath.Join(layout.workspaceRoot, ".atl", registry.RegistryFileName)
+		if _, err := os.Stat(regPath); err == nil {
+			if !opts.DryRun {
+				_ = os.Remove(regPath)
+				_ = os.Remove(filepath.Dir(regPath))
+			}
+			report.Actions = append(report.Actions, Action{
+				Operation: "remove-skill-registry",
+				Path:      regPath,
+			})
+		}
+	}
+
+	// 6. Remove cross-platform profile launchers if present and clean up bin/ if empty.
 	if layout.launcherPath != "" {
 		launcherVariants := []string{
 			layout.launcherPath,
@@ -597,8 +825,7 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 	}
 
-	// 6. Remove .pcs-state.json.
-	statePath := filepath.Join(layout.targetDir, StateFileName)
+	// 7. Remove .pcs-state.json.
 	if _, err := os.Stat(statePath); err == nil {
 		if !opts.DryRun {
 			_ = os.Remove(statePath)

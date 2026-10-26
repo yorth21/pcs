@@ -22,3 +22,13 @@ Build the standalone, zero-external-dependency Go CLI (`pcs`), embedding `brain/
   - Build `./bin/pcs` (ensuring `bin/` is gitignored) and verify `pcs version`, `pcs help`, `pcs doctor`, `pcs install --dry-run`, and end-to-end temp profile install/sync/status/uninstall.
   - Update `README.md`, `AGENTS.md`, and `docs/architecture.md` with CLI installation, profile setup (`CLAUDE_CONFIG_DIR="$HOME/.claude-pcs"` and `claude-pcs` wrapper), and command reference.
   - Commit each work unit cleanly using Conventional Commits (zero AI attribution).
+- [x] **WU-5: Resolve Issues #1–#10 (Granular Flags, Non-Destructive Merging, Namespaced Registry, Cross-Platform Portability, Token Budget & Portable Docs)**
+  - Decouple `--mcp-guidance` (default `true`), `--write-mcp-config` (default `false`), and `--write-hook` (default `false`) in `install` and `sync` (`#1`, `#8`).
+  - Preserve pre-existing MCP server entries (such as `engram`) and track exact added deltas in `.pcs-state.json` for surgical `uninstall` (`#2`).
+  - Namespace skill registry output to `.atl/pcs-skill-registry.md` and clean up on workspace `uninstall` (`#3`).
+  - Enforce LF line endings via `.gitattributes`, add cross-platform CI (`.github/workflows/ci.yml`), fix PowerShell/Windows path handling and `os.TempDir()` guards (`#4`).
+  - Preserve user content outside `pcs:*` markers byte-for-byte (including CRLF and triple newlines) and create one-time `.pre-pcs.bak` backups (`#5`).
+  - Add `--profile-dir` and `$CLAUDE_CONFIG_DIR` resolution in profile scope and substitute installed skills paths (`#6`).
+  - Align `pcs-explorer`, `pcs-strategist`, and `pcs-architect` CodeGraph fallback with read-only tool permissions (`#7`).
+  - Compact `CLAUDE.md` orchestrator/routing blocks (`<= 12 KB`), `pcs-phase-common.md` (`<= 5 KB`), and native subagents (`<= 6.5 KB`) with automated size budget tests (`#9`).
+  - Replace machine-local `file:///Users/...` links in `README.md` and `AGENTS.md` with portable relative links and enforce via unit tests (`#10`).

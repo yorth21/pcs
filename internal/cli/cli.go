@@ -98,30 +98,41 @@ func runInstall(args []string, env Env) int {
 	fs.SetOutput(env.Stderr)
 	scope := fs.String("scope", defaultScopeFromEnv(), "Installation scope: global, workspace, or profile (env: PCS_INSTALL_SCOPE)")
 	profileAlias := fs.Bool("profile", false, "Shorthand for --scope profile")
+	profileDir := fs.String("profile-dir", "", "Custom profile directory when using --scope profile")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
 	adapter := fs.String("adapter", installer.DefaultAdapter, "Frontend stack adapter (e.g. react-shadcn)")
 	persona := fs.String("persona", installer.DefaultPersona, "Coordinator persona variant: gentleman or neutral")
-	withMCP := fs.Bool("with-mcp", true, "Configure engram, context7, and codegraph MCP servers and permissions")
+	mcpGuidance := fs.Bool("mcp-guidance", true, "Inject pcs:codegraph-guidance and pcs:engram-protocol prompt blocks into CLAUDE.md")
+	writeMCPConfig := fs.Bool("write-mcp-config", false, "Write missing engram, context7, and codegraph MCP entries into .claude.json and settings.json")
+	writeHook := fs.Bool("write-hook", false, "Write the UserPromptSubmit skill-registry refresh hook into settings.json")
+	withMCP := fs.Bool("with-mcp", false, "Convenience alias for --mcp-guidance=true --write-mcp-config=true --write-hook=true")
 	dryRun := fs.Bool("dry-run", false, "Preview planned actions without writing files")
 	asJSON := fs.Bool("json", false, "Output installation report as JSON")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	overrides := visitedFlags(fs)
 	chosenScope := *scope
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
+		overrides["scope"] = true
 	}
 
 	rep, err := installer.Install(installer.Options{
 		Scope:           chosenScope,
 		TargetDir:       *targetDir,
+		ProfileDir:      *profileDir,
 		HomeDir:         env.HomeDir,
 		ClaudeConfigDir: env.ClaudeConfigDir,
 		Adapter:         *adapter,
 		Persona:         *persona,
+		MCPGuidance:     installer.BoolPtr(*mcpGuidance),
+		WriteMCPConfig:  *writeMCPConfig,
+		WriteHook:       *writeHook,
 		WithMCP:         *withMCP,
 		DryRun:          *dryRun,
+		FlagOverrides:   overrides,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "pcs install failed: %v\n", err)
@@ -138,20 +149,50 @@ func runSync(args []string, env Env) int {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	scope := fs.String("scope", defaultScopeFromEnv(), "Target scope: global, workspace, or profile (env: PCS_INSTALL_SCOPE)")
+	profileAlias := fs.Bool("profile", false, "Shorthand for --scope profile")
+	profileDir := fs.String("profile-dir", "", "Custom profile directory when using --scope profile")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
+	adapter := fs.String("adapter", "", "Override frontend stack adapter (e.g. react-shadcn)")
+	persona := fs.String("persona", "", "Override coordinator persona variant: gentleman or neutral")
+	mcpGuidance := fs.Bool("mcp-guidance", true, "Override whether pcs:codegraph-guidance and pcs:engram-protocol prompt blocks are injected")
+	writeMCPConfig := fs.Bool("write-mcp-config", false, "Override whether missing MCP servers and permissions are written to .claude.json and settings.json")
+	writeHook := fs.Bool("write-hook", false, "Override whether the UserPromptSubmit skill-registry hook is written to settings.json")
+	withMCP := fs.Bool("with-mcp", false, "Convenience alias for --mcp-guidance=true --write-mcp-config=true --write-hook=true")
 	dryRun := fs.Bool("dry-run", false, "Preview planned sync actions without writing files")
 	asJSON := fs.Bool("json", false, "Output sync report as JSON")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	overrides := visitedFlags(fs)
+	chosenScope := ""
+	if overrides["scope"] {
+		chosenScope = *scope
+	}
+	if *profileAlias {
+		chosenScope = installer.ScopeProfile
+		overrides["scope"] = true
+	}
+
+	var mcpGuidancePtr *bool
+	if overrides["mcp-guidance"] {
+		mcpGuidancePtr = installer.BoolPtr(*mcpGuidance)
+	}
 
 	rep, err := installer.Sync(installer.Options{
-		Scope:           *scope,
+		Scope:           chosenScope,
 		TargetDir:       *targetDir,
+		ProfileDir:      *profileDir,
 		HomeDir:         env.HomeDir,
 		ClaudeConfigDir: env.ClaudeConfigDir,
+		Adapter:         *adapter,
+		Persona:         *persona,
+		MCPGuidance:     mcpGuidancePtr,
+		WriteMCPConfig:  *writeMCPConfig,
+		WriteHook:       *writeHook,
+		WithMCP:         *withMCP,
 		DryRun:          *dryRun,
+		FlagOverrides:   overrides,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "pcs sync failed: %v\n", err)
@@ -168,18 +209,25 @@ func runUninstall(args []string, env Env) int {
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	scope := fs.String("scope", defaultScopeFromEnv(), "Target scope: global, workspace, or profile (env: PCS_INSTALL_SCOPE)")
+	profileAlias := fs.Bool("profile", false, "Shorthand for --scope profile")
+	profileDir := fs.String("profile-dir", "", "Custom profile directory when using --scope profile")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
-	removeMCP := fs.Bool("remove-mcp", false, "Also remove engram, context7, and codegraph MCP entries in global/workspace scopes")
+	removeMCP := fs.Bool("remove-mcp", false, "Also remove all engram, context7, and codegraph MCP entries in global/workspace scopes")
 	dryRun := fs.Bool("dry-run", false, "Preview planned uninstall actions without removing files")
 	asJSON := fs.Bool("json", false, "Output uninstall report as JSON")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	chosenScope := *scope
+	if *profileAlias {
+		chosenScope = installer.ScopeProfile
+	}
 
 	rep, err := installer.Uninstall(installer.Options{
-		Scope:           *scope,
+		Scope:           chosenScope,
 		TargetDir:       *targetDir,
+		ProfileDir:      *profileDir,
 		HomeDir:         env.HomeDir,
 		ClaudeConfigDir: env.ClaudeConfigDir,
 		RemoveMCP:       *removeMCP,
@@ -200,16 +248,23 @@ func runStatus(args []string, env Env) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	scope := fs.String("scope", defaultScopeFromEnv(), "Target scope: global, workspace, or profile (env: PCS_INSTALL_SCOPE)")
+	profileAlias := fs.Bool("profile", false, "Shorthand for --scope profile")
+	profileDir := fs.String("profile-dir", "", "Custom profile directory when using --scope profile")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
 	asJSON := fs.Bool("json", false, "Output status report as JSON")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	chosenScope := *scope
+	if *profileAlias {
+		chosenScope = installer.ScopeProfile
+	}
 
 	rep, err := installer.Status(installer.Options{
-		Scope:           *scope,
+		Scope:           chosenScope,
 		TargetDir:       *targetDir,
+		ProfileDir:      *profileDir,
 		HomeDir:         env.HomeDir,
 		ClaudeConfigDir: env.ClaudeConfigDir,
 	})
@@ -234,6 +289,14 @@ func runStatus(args []string, env Env) int {
 	printBoolMap(env.Stdout, "Skills", rep.Skills)
 	printBoolMap(env.Stdout, "MCP Servers", rep.MCPServers)
 	return 0
+}
+
+func visitedFlags(fs *flag.FlagSet) map[string]bool {
+	m := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		m[f.Name] = true
+	})
+	return m
 }
 
 func runDoctor(args []string, env Env) int {
@@ -373,13 +436,18 @@ func runCodeGraph(args []string, env Env) int {
 }
 
 func validateCodeGraphRoot(root, homeDir string) (string, error) {
-	absRoot, err := filepath.Abs(root)
+	trimmed := strings.TrimSpace(root)
+	if trimmed == "/" || trimmed == `\` {
+		return "", fmt.Errorf("cannot initialize CodeGraph at filesystem root %q", trimmed)
+	}
+
+	absRoot, err := filepath.Abs(trimmed)
 	if err != nil {
 		return "", fmt.Errorf("resolve path %q: %w", root, err)
 	}
 	cleanRoot := filepath.Clean(absRoot)
 
-	if cleanRoot == "/" || cleanRoot == `\` || (len(cleanRoot) == 3 && cleanRoot[1] == ':' && (cleanRoot[2] == '\\' || cleanRoot[2] == '/')) {
+	if filepath.Dir(cleanRoot) == cleanRoot {
 		return "", fmt.Errorf("cannot initialize CodeGraph at filesystem root %q", cleanRoot)
 	}
 
@@ -389,14 +457,27 @@ func validateCodeGraphRoot(root, homeDir string) (string, error) {
 	}
 	if home != "" {
 		if absHome, err := filepath.Abs(home); err == nil {
-			if filepath.Clean(absHome) == cleanRoot {
+			if equalCleanPath(absHome, cleanRoot) {
 				return "", fmt.Errorf("cannot initialize CodeGraph in user home directory %q", cleanRoot)
 			}
 		}
 	}
 
-	for _, forbidden := range []string{"/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp"} {
-		if cleanRoot == forbidden || strings.HasPrefix(cleanRoot, forbidden+"/") {
+	forbiddenTempRoots := []string{"/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp"}
+	if sysTmp := strings.TrimSpace(os.TempDir()); sysTmp != "" {
+		if absTmp, err := filepath.Abs(sysTmp); err == nil {
+			forbiddenTempRoots = append(forbiddenTempRoots, absTmp)
+			if evalTmp, err := filepath.EvalSymlinks(absTmp); err == nil {
+				forbiddenTempRoots = append(forbiddenTempRoots, evalTmp)
+			}
+		}
+	}
+	evalRoot := cleanRoot
+	if resolved, err := filepath.EvalSymlinks(cleanRoot); err == nil {
+		evalRoot = resolved
+	}
+	for _, forbidden := range forbiddenTempRoots {
+		if equalCleanPath(cleanRoot, forbidden) || equalCleanPath(evalRoot, forbidden) {
 			return "", fmt.Errorf("cannot initialize CodeGraph in temporary directory %q", cleanRoot)
 		}
 	}
@@ -410,6 +491,12 @@ func validateCodeGraphRoot(root, homeDir string) (string, error) {
 	}
 
 	return cleanRoot, nil
+}
+
+func equalCleanPath(a, b string) bool {
+	na := strings.ToLower(strings.TrimSuffix(filepath.ToSlash(filepath.Clean(a)), "/"))
+	nb := strings.ToLower(strings.TrimSuffix(filepath.ToSlash(filepath.Clean(b)), "/"))
+	return na != "" && na == nb
 }
 
 func writeJSONOutput(w io.Writer, v any) int {
@@ -459,22 +546,25 @@ Usage:
   pcs <command> [flags]
 
 Commands:
-  install                  Install pcs orchestrator, 5 native subagents, skills, and MCP config
+  install                  Install pcs orchestrator, 5 native subagents, skills, and optional MCP config
   sync                     Re-sync embedded brain files and markers into an existing installation
   uninstall                Cleanly remove pcs-owned markers, native subagents, and skills
   status                   Inspect installed markers, native subagents, skills, and MCP servers
   doctor                   Run diagnostic checks on MCP binaries, embedded brain, and target dir
-  skill-registry refresh   Scan SKILL.md files and generate .atl/skill-registry.md
+  skill-registry refresh   Scan SKILL.md files and generate .atl/pcs-skill-registry.md
   codegraph init           Validate project root and initialize CodeGraph index (.codegraph/)
   version                  Print pcs CLI version
   help                     Show this help message
 
 Key Flags (install / sync / uninstall / status):
   --scope global|workspace|profile   Target deployment mode (default: global -> ~/.claude or $CLAUDE_CONFIG_DIR; env: PCS_INSTALL_SCOPE)
+  --profile-dir <dir>                Custom profile directory when using --scope profile
   --target-dir <dir>                 Override target configuration directory
   --adapter <name>                   Frontend stack adapter (default: react-shadcn)
   --persona gentleman|neutral        Coordinator persona variant (default: gentleman)
-  --with-mcp=true|false              Wire engram, context7, and codegraph MCP servers (default: true)
+  --mcp-guidance=true|false          Inject pcs:codegraph-guidance and pcs:engram-protocol into CLAUDE.md (default: true)
+  --write-mcp-config                 Write missing engram, context7, and codegraph MCP entries into .claude.json and settings.json (default: false)
+  --write-hook                       Write UserPromptSubmit skill-registry refresh hook into settings.json (default: false)
   --dry-run                          Preview planned actions without modifying disk
   --json                             Emit structured JSON output
 `)

@@ -10,6 +10,9 @@ import (
 	"strings"
 )
 
+// RegistryFileName is the PCS-namespaced skill registry file written inside .atl/.
+const RegistryFileName = "pcs-skill-registry.md"
+
 // SkillEntry represents a discovered SKILL.md entry.
 type SkillEntry struct {
 	Name        string `json:"name"`
@@ -18,7 +21,7 @@ type SkillEntry struct {
 	Path        string `json:"path"`
 }
 
-// RefreshResult reports the outcome of refreshing .atl/skill-registry.md.
+// RefreshResult reports the outcome of refreshing .atl/pcs-skill-registry.md.
 type RefreshResult struct {
 	OutputPath string       `json:"output_path"`
 	Hash       string       `json:"hash"`
@@ -27,7 +30,7 @@ type RefreshResult struct {
 }
 
 // Refresh scans rootDir and extraSkillDirs for SKILL.md files, parses their
-// YAML frontmatter, and writes a deterministic .atl/skill-registry.md table
+// YAML frontmatter, and writes a deterministic .atl/pcs-skill-registry.md table
 // with a SHA-256 content hash header for cache-hit fast paths.
 func Refresh(rootDir string, extraSkillDirs []string) (*RefreshResult, error) {
 	if strings.TrimSpace(rootDir) == "" {
@@ -47,6 +50,7 @@ func Refresh(rootDir string, extraSkillDirs []string) (*RefreshResult, error) {
 		{dir: filepath.Join(absRoot, "skills"), scope: "workspace"},
 	}
 
+	normalizedExtras := make([]string, 0, len(extraSkillDirs))
 	for _, extra := range extraSkillDirs {
 		if strings.TrimSpace(extra) == "" {
 			continue
@@ -55,10 +59,14 @@ func Refresh(rootDir string, extraSkillDirs []string) (*RefreshResult, error) {
 		if absErr != nil {
 			absExtra = extra
 		}
+		normalizedExtras = append(normalizedExtras, absExtra)
+	}
+
+	for _, absExtra := range normalizedExtras {
 		candidates = append(candidates, struct {
 			dir   string
 			scope string
-		}{dir: absExtra, scope: classifyScope(absRoot, absExtra)})
+		}{dir: absExtra, scope: classifyScope(absRoot, absExtra, normalizedExtras)})
 	}
 
 	byName := make(map[string]SkillEntry)
@@ -102,7 +110,7 @@ func Refresh(rootDir string, extraSkillDirs []string) (*RefreshResult, error) {
 	sum := sha256.Sum256([]byte(body))
 	hash := hex.EncodeToString(sum[:])
 
-	outPath := filepath.Join(absRoot, ".atl", "skill-registry.md")
+	outPath := filepath.Join(absRoot, ".atl", RegistryFileName)
 	header := fmt.Sprintf("<!-- pcs:skill-registry-hash:%s -->\n", hash)
 	fullContent := header + body
 
@@ -131,14 +139,37 @@ func Refresh(rootDir string, extraSkillDirs []string) (*RefreshResult, error) {
 	}, nil
 }
 
-func classifyScope(absRoot, skillDir string) string {
-	if strings.HasPrefix(skillDir, absRoot) {
+func classifyScope(absRoot, skillDir string, extraSkillDirs []string) string {
+	normRoot := normalizePathForCompare(absRoot)
+	normSkill := normalizePathForCompare(skillDir)
+
+	if normRoot != "" && (normSkill == normRoot || strings.HasPrefix(normSkill, normRoot+"/")) {
 		return "workspace"
 	}
-	if strings.Contains(skillDir, ".claude-pcs") {
+	if strings.Contains(normSkill, ".claude-pcs") {
 		return "profile"
 	}
+	if envProfile := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); envProfile != "" {
+		normEnv := normalizePathForCompare(envProfile)
+		if normEnv != "" && (normSkill == normEnv || strings.HasPrefix(normSkill, normEnv+"/")) {
+			return "profile"
+		}
+	}
+	if strings.HasSuffix(normSkill, "/.claude/skills") {
+		return "global"
+	}
+	for _, extra := range extraSkillDirs {
+		normExtra := normalizePathForCompare(extra)
+		if normExtra != "" && (normSkill == normExtra || strings.HasPrefix(normSkill, normExtra+"/")) {
+			return "profile"
+		}
+	}
 	return "global"
+}
+
+func normalizePathForCompare(p string) string {
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(p)))
+	return strings.ToLower(strings.TrimSuffix(cleaned, "/"))
 }
 
 func formatDisplayPath(absRoot, skillFile string) string {

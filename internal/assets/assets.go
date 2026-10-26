@@ -165,12 +165,10 @@ func CodeGraphGuidanceBlock() string {
 	return `<!-- pcs:codegraph-guidance -->
 ## CodeGraph Intelligence Protocol
 
-When ` + "`codegraph`" + ` MCP tools are available (` + "`mcp__codegraph__codegraph_explore`" + `), use structural AST exploration before broad filesystem grep or directory scans:
-
-1. If ` + "`.codegraph/`" + ` is missing in a real project workspace, initialize it once via ` + "`pcs codegraph init --cwd <project-root>`" + ` (or ` + "`codegraph init <project-root>`" + ` directly). Do not use ` + "`pcs codegraph`" + ` as a general proxy; its ` + "`init`" + ` command exists only to validate the project root before initialization; intelligence queries belong to the upstream ` + "`codegraph`" + ` CLI.
-2. Call ` + "`codegraph_explore`" + ` first to trace routes, component trees, hooks, symbol callers, and blast radius in a single call.
-3. Read only the specific file ranges returned by ` + "`codegraph_explore`" + `.
-4. Fall back to ` + "`Grep`" + ` / ` + "`Glob`" + ` only for non-code assets, styles, or when CodeGraph is unavailable.
+When ` + "`codegraph`" + ` MCP tools (` + "`mcp__codegraph__codegraph_explore`" + `) are available, use structural AST exploration before broad filesystem scans:
+1. If ` + "`.codegraph/`" + ` is missing in a real project workspace, initialize it once via ` + "`pcs codegraph init --cwd <project-root>`" + ` (which validates the root directory before calling ` + "`codegraph init`" + `).
+2. Call ` + "`codegraph_explore`" + ` first to trace routes, component trees, hooks, symbol callers, and blast radius in a single call, then read only the returned file ranges.
+3. Fall back to ` + "`Grep`" + ` / ` + "`Glob`" + ` only for non-code assets, styles, or when CodeGraph is unavailable.
 <!-- /pcs:codegraph-guidance -->`
 }
 
@@ -184,7 +182,7 @@ func PersonaBlock(persona string) (string, error) {
 
 - **Role**: Senior Product & Software Architect (15+ years experience). Direct, caring, and rigorous mentor who prioritizes user outcomes, cognitive clarity, and solid architectural foundations over impulsive code generation.
 - **Persona Scope (CRITICAL)**: Conversational tone and language apply ONLY to direct chat replies to the user.
-- **Artifact Language Contract**: Every technical or product artifact (` + "`pcs/specs/*`" + `, ` + "`pcs/tasks/*`" + `, code identifiers, comments, UI copy, accessibility labels, tests, documentation, and commit messages) MUST be written in clear, rigorous, professional English unless the project explicitly mandates another UI locale.
+- **Artifact Language Contract**: Every technical or product artifact (` + "`pcs/specs/*`" + `, ` + "`pcs/tasks/*`" + `, code identifiers, comments, UI copy, accessibility labels, tests, docs, and commits) MUST be in rigorous, professional English unless the project explicitly mandates another UI locale.
 - **Zero External Company Shorthand**: Never cite external product companies as shorthand for UX quality; state the concrete cognitive law, usability heuristic, or design token rule directly.
 <!-- /pcs:persona -->`, nil
 	case "neutral":
@@ -207,10 +205,8 @@ func EngramProtocolBlock() string {
 ## Engram Persistent Memory — Protocol
 
 Engram (` + "`mcp__engram__*`" + `) provides persistent cross-session memory across compactions:
-
 1. **Session Detection**: Call ` + "`mem_current_project`" + ` with the workspace directory at session start and reuse the active session identity.
-2. **Dual PCD Persistence**: Every ` + "`pcs-*`" + ` phase mirrors its specification and task state to Engram under ` + "`pcs/{feature-name}/{explore|strategy|architecture|tasks|apply|verify}`" + ` with ` + "`capture_prompt: false`" + ` when supported.
-3. **Recovery Before Re-Work**: Before resuming an existing feature or after compaction, call ` + "`mem_context`" + `, ` + "`mem_search`" + `, and ` + "`mem_get_observation`" + ` alongside reading on-disk ` + "`pcs/specs/`" + ` and ` + "`pcs/tasks/`" + ` artifacts.
-4. **Delivery Guarantee**: Saving to Engram is internal bookkeeping and never replaces the user-facing response.
+2. **Dual PCD Persistence**: Every ` + "`pcs-*`" + ` phase mirrors its specification and task state to Engram under ` + "`pcs/{feature-name}/{explore|strategy|architecture|tasks|apply|verify}`" + ` (` + "`capture_prompt: false`" + `).
+3. **Recovery & Delivery**: Before resuming or after compaction, reconcile ` + "`mem_context`" + ` / ` + "`mem_search`" + ` / ` + "`mem_get_observation`" + ` with on-disk ` + "`pcs/specs/`" + ` and ` + "`pcs/tasks/`" + `. Saving to Engram never replaces the user-facing reply.
 <!-- /pcs:engram-protocol -->`
 }

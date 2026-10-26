@@ -20,7 +20,8 @@ func EndTag(markerID string) string {
 func EnsureTags(markerID, blockContent string) string {
 	start := StartTag(markerID)
 	end := EndTag(markerID)
-	trimmed := strings.TrimSpace(blockContent)
+	normalized := strings.ReplaceAll(blockContent, "\r\n", "\n")
+	trimmed := strings.TrimSpace(normalized)
 	if strings.HasPrefix(trimmed, start) && strings.HasSuffix(trimmed, end) {
 		return trimmed
 	}
@@ -62,10 +63,16 @@ func ExtractBlock(content, markerID string) (string, bool) {
 
 // UpsertBlock inserts or replaces a marked HTML-comment block inside content.
 // If <!-- markerID --> ... <!-- /markerID --> already exists, it is replaced
-// in-place while preserving surrounding content. Otherwise, the block is
-// appended separated by a single blank line.
+// in-place while preserving all surrounding content byte-for-byte. Otherwise,
+// the block is appended separated by a single blank line using the file's
+// dominant line ending.
 func UpsertBlock(content, markerID, blockContent string) string {
+	eol := detectEOL(content)
 	normalizedBlock := EnsureTags(markerID, blockContent)
+	if eol == "\r\n" {
+		normalizedBlock = strings.ReplaceAll(normalizedBlock, "\n", "\r\n")
+	}
+
 	start := StartTag(markerID)
 	end := EndTag(markerID)
 
@@ -74,21 +81,25 @@ func UpsertBlock(content, markerID, blockContent string) string {
 		relEnd := strings.Index(content[startIdx+len(start):], end)
 		if relEnd >= 0 {
 			endIdx := startIdx + len(start) + relEnd + len(end)
-			updated := content[:startIdx] + normalizedBlock + content[endIdx:]
-			return normalizeNewlines(updated)
+			return content[:startIdx] + normalizedBlock + content[endIdx:]
 		}
 	}
 
-	trimmedExisting := strings.TrimRight(content, " \t\r\n")
-	if trimmedExisting == "" {
-		return normalizedBlock + "\n"
+	if content == "" {
+		return normalizedBlock + eol
 	}
-	return normalizeNewlines(trimmedExisting + "\n\n" + normalizedBlock + "\n")
+	if strings.HasSuffix(content, eol+eol) {
+		return content + normalizedBlock + eol
+	}
+	if strings.HasSuffix(content, eol) {
+		return content + eol + normalizedBlock + eol
+	}
+	return content + eol + eol + normalizedBlock + eol
 }
 
-// RemoveBlock removes <!-- markerID --> ... <!-- /markerID --> from content.
-// It returns the cleaned content and true if a block was found and removed,
-// or the original content and false if the block was not present.
+// RemoveBlock removes <!-- markerID --> ... <!-- /markerID --> from content
+// without altering any content outside the removed block and its adjacent
+// blank-line separator.
 func RemoveBlock(content, markerID string) (string, bool) {
 	start := StartTag(markerID)
 	end := EndTag(markerID)
@@ -103,37 +114,36 @@ func RemoveBlock(content, markerID string) (string, bool) {
 	}
 	endIdx := startIdx + len(start) + relEnd + len(end)
 
-	// Consume one trailing newline if present so removal does not leave extra blank lines.
-	if endIdx < len(content) && content[endIdx] == '\r' {
-		endIdx++
-	}
-	if endIdx < len(content) && content[endIdx] == '\n' {
-		endIdx++
+	eol := detectEOL(content)
+	prefix := content[:startIdx]
+	suffix := content[endIdx:]
+
+	// Case 1: Block is followed by a blank-line separator (e.g., first or middle block).
+	if strings.HasPrefix(suffix, eol+eol) {
+		if startIdx == 0 || strings.HasSuffix(prefix, eol+eol) {
+			suffix = suffix[len(eol+eol):]
+			return prefix + suffix, true
+		}
 	}
 
-	updated := content[:startIdx] + content[endIdx:]
-	cleaned := normalizeNewlines(updated)
-	if strings.TrimSpace(cleaned) == "" {
-		return "", true
+	// Consume one trailing line ending immediately following the closing tag.
+	if strings.HasPrefix(suffix, "\r\n") {
+		suffix = suffix[2:]
+	} else if strings.HasPrefix(suffix, "\n") {
+		suffix = suffix[1:]
 	}
-	return cleaned, true
+
+	// Case 2: Block was at the end of the file and preceded by a blank line added by UpsertBlock.
+	if suffix == "" && strings.HasSuffix(prefix, eol+eol) {
+		prefix = prefix[:len(prefix)-len(eol)]
+	}
+
+	return prefix + suffix, true
 }
 
-func normalizeNewlines(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	for strings.Contains(s, "\n\n\n") {
-		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
+func detectEOL(content string) string {
+	if strings.Contains(content, "\r\n") {
+		return "\r\n"
 	}
-	trimmed := strings.TrimSpace(s)
-	if trimmed == "" {
-		return ""
-	}
-	if !strings.HasSuffix(s, "\n") {
-		s += "\n"
-	}
-	// Collapse trailing multiple newlines into a single newline.
-	s = strings.TrimRight(s, "\n") + "\n"
-	// Collapse leading blank lines while preserving internal paragraph breaks.
-	s = strings.TrimLeft(s, "\n")
-	return s
+	return "\n"
 }

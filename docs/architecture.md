@@ -144,32 +144,37 @@ All automated `mem_save` calls inside `pcs` phases set `capture_prompt: false` (
 2. `PCS_INSTALL_SCOPE` environment variable fallback.
 3. Default scope: **`global`**.
    - When `scope == "global"` and `--target-dir` is omitted: if `CLAUDE_CONFIG_DIR` is set in the environment, `pcs` targets `$CLAUDE_CONFIG_DIR` (writing MCP servers to `$CLAUDE_CONFIG_DIR/.claude.json`); otherwise it targets `$HOME/.claude` (writing MCP servers to `$HOME/.claude.json`).
+   - When `scope == "profile"` and `--target-dir` is omitted: `pcs` checks `--profile-dir`, then `$CLAUDE_CONFIG_DIR`, and defaults to `$HOME/.claude-pcs`.
 
-### Automated MCP Infrastructure Wiring (`--with-mcp=true`)
+### Granular Prompt Guidance, MCP Config, and Hook Wiring
 
-When `pcs install` runs with `--with-mcp=true` (the default), `internal/mcp` atomically merges three foundational MCP servers into `.claude.json` (or `.mcp.json` in workspace mode) and configures `settings.json` with `.bak` backups and zero data loss on existing user keys:
+`pcs install` and `pcs sync` separate prompt guidance from JSON config mutation:
+- `--mcp-guidance=true` (default `true`): Injects `<!-- pcs:codegraph-guidance -->` and `<!-- pcs:engram-protocol -->` into `CLAUDE.md` alongside `<!-- pcs:persona -->`, `<!-- pcs:orchestrator -->`, and `<!-- pcs:ux-routing -->`. Setting `--mcp-guidance=false` omits or actively removes those two MCP prompt blocks.
+- `--write-mcp-config` (default `false`): Atomically merges only missing MCP servers (`engram`, `context7`, `codegraph`) into `.claude.json` (never overwriting pre-existing server definitions) and adds missing MCP permissions/plugins into `settings.json` with one-time `.pre-pcs.bak` backups and delta tracking in `.pcs-state.json`.
+- `--write-hook` (default `false`): Adds the `UserPromptSubmit` hook (`pcs skill-registry refresh`) into `settings.json`.
 
 | MCP Server | Configured Command | `settings.json` Permissions & Plugins |
 |------------|--------------------|---------------------------------------|
-| **`engram`** | `/opt/homebrew/bin/engram mcp --tools=agent` (or resolved `engram` binary on `$PATH`) | `mcp__engram__*`, `mcp__plugin_engram_engram__*`, `enabledPlugins["engram@engram"] = true` |
+| **`engram`** | Resolved `engram` binary on `$PATH` (falling back to `/opt/homebrew/bin/engram`) with `mcp --tools=agent` | `mcp__engram__*`, `mcp__plugin_engram_engram__*`, `enabledPlugins["engram@engram"] = true` |
 | **`context7`** | `npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp` | `mcp__context7__*` |
 | **`codegraph`** | `codegraph serve --mcp` (`stdio`) | `mcp__codegraph__*` |
-
-In addition, `settings.json` receives a `UserPromptSubmit` hook (`pcs skill-registry refresh`) if not already registered.
 
 ### Mode A: Global Scope (`--scope global`, Default)
 
 ```bash
-# Installs into ~/.claude + ~/.claude.json
+# Safe default: installs CLAUDE.md markers, agents, and skills into ~/.claude without touching .claude.json or settings.json
 pcs install --adapter react-shadcn --persona gentleman
+
+# Opt-in MCP and hook configuration
+pcs install --write-mcp-config --write-hook
 
 # Or targets an isolated Claude config directory via CLAUDE_CONFIG_DIR
 CLAUDE_CONFIG_DIR="$HOME/.claude-pcs" pcs install
 ```
 
 1. Preserves all existing user settings, custom agents, skills, and projects in `~/.claude` and `~/.claude.json`.
-2. Upserts all 5 `pcs:*` markers (`<!-- pcs:codegraph-guidance -->`, `<!-- pcs:persona -->`, `<!-- pcs:engram-protocol -->`, `<!-- pcs:orchestrator -->`, and `<!-- pcs:ux-routing -->`) into `CLAUDE.md`.
-3. Installs `pcs-*.md` agents and `pcs-*` skills, tracking ownership in `.pcs-native-agent-ownership.json` and `.pcs-state.json` so `pcs uninstall` removes all 5 `pcs:*` markers and `pcs`-owned files cleanly.
+2. Upserts `pcs:*` markers into `CLAUDE.md` while preserving all user text and line endings outside `pcs:*` blocks byte-for-byte.
+3. Installs `pcs-*.md` agents and `pcs-*` skills, tracking ownership in `.pcs-native-agent-ownership.json` and exact deltas in `.pcs-state.json` so `pcs uninstall` restores pre-install state cleanly.
 
 ### Mode B: Workspace Scope (`--scope workspace`, `<repo>/.claude`)
 
@@ -179,16 +184,16 @@ pcs install --scope workspace --target-dir /path/to/frontend-repo/.claude
 
 1. Writes `pcs-*.md` agents into `<repo>/.claude/agents/` and `pcs-*` skills into `<repo>/.claude/skills/`.
 2. Upserts `pcs:*` markers into `<repo>/CLAUDE.md`.
-3. Runs `pcs skill-registry refresh` to generate `<repo>/.atl/skill-registry.md` with a deterministic SHA-256 content hash header.
+3. Runs `pcs skill-registry refresh` to generate `<repo>/.atl/pcs-skill-registry.md` with a deterministic SHA-256 content hash header (removed automatically on `pcs uninstall`).
 
 ### Mode C: Explicit Profile Scope (`--scope profile`, `~/.claude-pcs`)
 
 ```bash
-pcs install --scope profile --adapter react-shadcn --persona gentleman --with-mcp=true
+pcs install --scope profile --profile-dir ~/.claude-pcs --adapter react-shadcn --persona gentleman
 ```
 
-1. Creates `~/.claude-pcs` with `CLAUDE.md`, `agents/pcs-*.md`, `skills/{_shared,pcs-core,pcs-adapter-react-shadcn}`, `.claude.json`, and `settings.json`.
-2. Generates cross-platform launchers in `~/.claude-pcs/bin/`:
+1. Creates `~/.claude-pcs` (or `--profile-dir` / `$CLAUDE_CONFIG_DIR`) with `CLAUDE.md`, `agents/pcs-*.md`, `skills/{_shared,pcs-core,pcs-adapter-react-shadcn}`, and optional `.claude.json` / `settings.json`.
+2. Generates cross-platform launchers in `<profile-dir>/bin/`:
    - `claude-pcs` (POSIX shell script)
    - `claude-pcs.cmd` (Windows Command Prompt batch script)
-   - `claude-pcs.ps1` (Windows PowerShell script)
+   - `claude-pcs.ps1` (Windows PowerShell script using single-quoted path escaping)

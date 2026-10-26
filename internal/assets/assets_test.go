@@ -1,6 +1,8 @@
 package assets
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -41,6 +43,7 @@ func TestEmbeddedBlocksAndContracts(t *testing.T) {
 				"pcs/specs/",
 				"pcs/tasks/",
 				"skill_resolution",
+				".atl/pcs-skill-registry.md",
 			},
 		},
 		{
@@ -86,7 +89,7 @@ func TestNativeAgents(t *testing.T) {
 	for _, agent := range agents {
 		t.Run(agent.RelPath, func(t *testing.T) {
 			text := string(agent.Content)
-			if !strings.HasPrefix(text, "---\n") {
+			if !strings.HasPrefix(text, "---\n") && !strings.HasPrefix(text, "---\r\n") {
 				t.Errorf("agent %s missing YAML frontmatter start", agent.RelPath)
 			}
 			if !strings.Contains(text, "name: "+strings.TrimSuffix(agent.RelPath, ".md")) {
@@ -95,7 +98,95 @@ func TestNativeAgents(t *testing.T) {
 			if !strings.Contains(text, "mcp__engram__") {
 				t.Errorf("agent %s missing engram MCP tool declaration", agent.RelPath)
 			}
+			// Read-only agents without Bash tool must never instruct running pcs codegraph init.
+			if agent.RelPath == "pcs-explorer.md" || agent.RelPath == "pcs-strategist.md" || agent.RelPath == "pcs-architect.md" {
+				if strings.Contains(text, "pcs codegraph init") {
+					t.Errorf("read-only agent %s (without Bash tool) must not instruct running 'pcs codegraph init'", agent.RelPath)
+				}
+			}
 		})
+	}
+}
+
+func TestPromptSizeBudget(t *testing.T) {
+	orch, err := OrchestratorBlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	routing, err := UXRoutingBlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	persona, err := PersonaBlock("gentleman")
+	if err != nil {
+		t.Fatal(err)
+	}
+	engram := EngramProtocolBlock()
+	cg := CodeGraphGuidanceBlock()
+
+	totalAlwaysLoaded := len(orch) + len(routing) + len(persona) + len(engram) + len(cg)
+	const maxAlwaysLoadedBytes = 12 * 1024 // 12 KB
+	if totalAlwaysLoaded > maxAlwaysLoadedBytes {
+		t.Errorf("always-loaded CLAUDE.md blocks total %d bytes, exceeding budget of %d bytes (12 KB)",
+			totalAlwaysLoaded, maxAlwaysLoadedBytes)
+	}
+
+	shared, err := SharedPhaseContract()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const maxSharedBytes = 5 * 1024 // 5 KB
+	if len(shared) > maxSharedBytes {
+		t.Errorf("pcs-phase-common.md is %d bytes, exceeding budget of %d bytes (5 KB)",
+			len(shared), maxSharedBytes)
+	}
+
+	agents, err := NativeAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const maxAgentBytes = 6656 // 6.5 KB
+	for _, agent := range agents {
+		if len(agent.Content) > maxAgentBytes {
+			t.Errorf("agent %s is %d bytes, exceeding budget of %d bytes (6.5 KB)",
+				agent.RelPath, len(agent.Content), maxAgentBytes)
+		}
+	}
+}
+
+func TestNoLocalFileURLsInDocsAndBrain(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	targets := []string{
+		filepath.Join(repoRoot, "README.md"),
+		filepath.Join(repoRoot, "AGENTS.md"),
+		filepath.Join(repoRoot, "docs"),
+		filepath.Join(repoRoot, "brain"),
+	}
+
+	for _, target := range targets {
+		err := filepath.WalkDir(target, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() || !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			content := string(b)
+			if strings.Contains(content, "file:///") {
+				t.Errorf("%s contains machine-local 'file:///' link", path)
+			}
+			if strings.Contains(content, "/Users/") {
+				t.Errorf("%s contains machine-local '/Users/' path", path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", target, err)
+		}
 	}
 }
 

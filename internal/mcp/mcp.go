@@ -14,6 +14,8 @@ const (
 	ServerEngram    = "engram"
 	ServerContext7  = "context7"
 	ServerCodeGraph = "codegraph"
+
+	PrePCSBackupSuffix = ".pre-pcs.bak"
 )
 
 // DefaultComponents lists the three foundational MCP servers wired by pcs.
@@ -34,13 +36,39 @@ var DefaultPermissionAllows = []string{
 	"mcp__context7__*",
 }
 
-// ResolveEngramBinary returns the preferred engram executable path.
+// ClaudeMergeResult records the exact delta applied by MergeClaudeJSONWithDelta.
+type ClaudeMergeResult struct {
+	CreatedFile  bool     `json:"created_file"`
+	AddedServers []string `json:"added_servers"`
+}
+
+// SettingsMergeResult records the exact delta applied by MergeSettingsJSONWithDelta.
+type SettingsMergeResult struct {
+	CreatedFile      bool     `json:"created_file"`
+	AddedPermissions []string `json:"added_permissions"`
+	AddedPlugins     []string `json:"added_plugins"`
+	AddedHook        bool     `json:"added_hook"`
+}
+
+// UnmergeDelta specifies which keys were added by pcs so Uninstall removes only pcs-added state.
+type UnmergeDelta struct {
+	CreatedClaudeJSON   bool
+	CreatedSettingsJSON bool
+	AddedMCPServers     []string
+	AddedPermissions    []string
+	AddedPlugins        []string
+	AddedHook           bool
+	ForceRemoveAllMCP   bool
+}
+
+// ResolveEngramBinary returns the preferred engram executable path, checking
+// PATH via LookPathFunc first before falling back to /opt/homebrew/bin/engram.
 func ResolveEngramBinary() string {
-	if _, err := os.Stat("/opt/homebrew/bin/engram"); err == nil {
-		return "/opt/homebrew/bin/engram"
-	}
 	if p, err := LookPathFunc("engram"); err == nil && p != "" {
 		return p
+	}
+	if _, err := os.Stat("/opt/homebrew/bin/engram"); err == nil {
+		return "/opt/homebrew/bin/engram"
 	}
 	return "engram"
 }
@@ -76,128 +104,222 @@ func ServerDefinition(component string) (map[string]any, error) {
 	}
 }
 
-// MergeClaudeJSON reads the existing JSON file at path (or initializes an empty
-// object if absent), preserves all existing user keys and custom MCP servers,
-// sets/updates the requested MCP server entries (defaulting to engram, context7,
-// and codegraph when components is empty), creates a .bak backup when the file
-// already exists, and writes formatted JSON atomically.
+// MergeClaudeJSON merges missing MCP server entries into path.
 func MergeClaudeJSON(path string, components []string) error {
+	_, err := MergeClaudeJSONWithDelta(path, components)
+	return err
+}
+
+// MergeClaudeJSONWithDelta reads the existing JSON file at path (or initializes
+// an empty object if absent), preserves all existing user keys and pre-existing
+// MCP servers (never overwriting an existing server entry such as engram),
+// adds only missing MCP server entries, creates a one-time .pre-pcs.bak backup
+// when the file already existed, and writes formatted JSON atomically while
+// preserving file permissions (defaulting to 0600 for .claude.json).
+func MergeClaudeJSONWithDelta(path string, components []string) (*ClaudeMergeResult, error) {
 	if len(components) == 0 {
 		components = DefaultComponents
 	}
 
-	root, existed, rawExisting, err := readJSONObject(path)
+	root, existed, rawExisting, perm, err := readJSONObjectWithPerm(path, 0o600)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	res := &ClaudeMergeResult{
+		CreatedFile: !existed,
 	}
 
 	mcpServers := ensureMap(root, "mcpServers")
 	for _, comp := range components {
+		if _, alreadyPresent := mcpServers[comp]; alreadyPresent {
+			continue
+		}
 		def, defErr := ServerDefinition(comp)
 		if defErr != nil {
-			return defErr
+			return nil, defErr
 		}
 		mcpServers[comp] = def
+		res.AddedServers = append(res.AddedServers, comp)
 	}
 
 	if existed {
-		if err := writeBackup(path+".bak", rawExisting); err != nil {
-			return err
+		if err := WritePrePCSBackupOnce(path, rawExisting, perm); err != nil {
+			return nil, err
 		}
 	}
-	return writeJSONAtomic(path, root)
+	if err := writeJSONAtomicWithPerm(path, root, perm); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 // MergeSettingsJSON merges MCP tool permissions, enabledPlugins, and the
-// UserPromptSubmit skill-registry refresh hook into settings.json while
-// preserving all existing user configuration and creating a .bak backup.
+// UserPromptSubmit skill-registry refresh hook into settings.json.
 func MergeSettingsJSON(path string, components []string, targetDir string) error {
+	_, err := MergeSettingsJSONWithDelta(path, components, targetDir, true, true)
+	return err
+}
+
+// MergeSettingsJSONWithDelta merges requested MCP permissions/plugins (when
+// writeMCPConfig is true) and/or the UserPromptSubmit skill-registry hook (when
+// writeHook is true) into settings.json, recording only newly added items.
+func MergeSettingsJSONWithDelta(path string, components []string, targetDir string, writeMCPConfig, writeHook bool) (*SettingsMergeResult, error) {
 	if len(components) == 0 {
 		components = DefaultComponents
 	}
 
-	root, existed, rawExisting, err := readJSONObject(path)
+	root, existed, rawExisting, perm, err := readJSONObjectWithPerm(path, 0o644)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	// 1. Merge permissions.allow without duplicates.
-	permissions := ensureMap(root, "permissions")
-	allowList := ensureStringSlice(permissions, "allow")
-	for _, perm := range permissionsForComponents(components) {
-		if !slices.Contains(allowList, perm) {
-			allowList = append(allowList, perm)
+	res := &SettingsMergeResult{
+		CreatedFile: !existed,
+	}
+
+	if writeMCPConfig {
+		// 1. Merge permissions.allow without duplicates.
+		permissions := ensureMap(root, "permissions")
+		allowList := ensureStringSlice(permissions, "allow")
+		for _, p := range permissionsForComponents(components) {
+			if !slices.Contains(allowList, p) {
+				allowList = append(allowList, p)
+				res.AddedPermissions = append(res.AddedPermissions, p)
+			}
+		}
+		permissions["allow"] = allowList
+
+		// 2. Configure enabledPlugins (engram@engram: true when engram is enabled and not already set).
+		if slices.Contains(components, ServerEngram) {
+			enabledPlugins := ensureMap(root, "enabledPlugins")
+			if _, exists := enabledPlugins["engram@engram"]; !exists {
+				enabledPlugins["engram@engram"] = true
+				res.AddedPlugins = append(res.AddedPlugins, "engram@engram")
+			}
 		}
 	}
-	permissions["allow"] = allowList
 
-	// 2. Configure enabledPlugins (engram@engram: true when engram is enabled).
-	if slices.Contains(components, ServerEngram) {
-		enabledPlugins := ensureMap(root, "enabledPlugins")
-		enabledPlugins["engram@engram"] = true
+	if writeHook {
+		// 3. Ensure UserPromptSubmit hook for pcs skill-registry refresh.
+		hooks := ensureMap(root, "hooks")
+		res.AddedHook = ensureSkillRegistryHook(hooks, targetDir)
 	}
-
-	// 3. Ensure UserPromptSubmit hook for pcs skill-registry refresh.
-	hooks := ensureMap(root, "hooks")
-	ensureSkillRegistryHook(hooks, targetDir)
 
 	if existed {
-		if err := writeBackup(path+".bak", rawExisting); err != nil {
-			return err
+		if err := WritePrePCSBackupOnce(path, rawExisting, perm); err != nil {
+			return nil, err
 		}
 	}
-	return writeJSONAtomic(path, root)
+	if err := writeJSONAtomicWithPerm(path, root, perm); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 // UnmergeMCP removes pcs-managed MCP servers and hooks when requested.
-// When onlyPCSOwned is true, shared infrastructure servers (engram, context7,
-// codegraph) are preserved while pcs skill-registry hooks are removed. When
-// onlyPCSOwned is false, the 3 MCP servers and pcs permissions are also removed.
 func UnmergeMCP(claudeJSONPath, settingsJSONPath string, onlyPCSOwned bool) error {
-	if !onlyPCSOwned && strings.TrimSpace(claudeJSONPath) != "" {
-		root, existed, rawExisting, err := readJSONObject(claudeJSONPath)
+	delta := UnmergeDelta{
+		AddedHook:         true,
+		ForceRemoveAllMCP: !onlyPCSOwned,
+	}
+	if !onlyPCSOwned {
+		delta.AddedMCPServers = slices.Clone(DefaultComponents)
+		delta.AddedPermissions = slices.Clone(DefaultPermissionAllows)
+		delta.AddedPlugins = []string{"engram@engram"}
+	}
+	return UnmergeWithDelta(claudeJSONPath, settingsJSONPath, delta)
+}
+
+// UnmergeWithDelta removes only the MCP servers, permissions, plugins, and hooks
+// recorded as added by pcs (or all default PCS MCP servers when ForceRemoveAllMCP is true).
+func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelta) error {
+	serversToRemove := delta.AddedMCPServers
+	if delta.ForceRemoveAllMCP && len(serversToRemove) == 0 {
+		serversToRemove = DefaultComponents
+	}
+
+	if strings.TrimSpace(claudeJSONPath) != "" && (len(serversToRemove) > 0 || delta.CreatedClaudeJSON) {
+		root, existed, _, perm, err := readJSONObjectWithPerm(claudeJSONPath, 0o600)
 		if err != nil {
 			return err
 		}
 		if existed {
 			if mcpServers, ok := root["mcpServers"].(map[string]any); ok {
-				for _, comp := range DefaultComponents {
+				for _, comp := range serversToRemove {
 					delete(mcpServers, comp)
 				}
+				if len(mcpServers) == 0 && delta.CreatedClaudeJSON {
+					delete(root, "mcpServers")
+				}
 			}
-			if err := writeBackup(claudeJSONPath+".bak", rawExisting); err != nil {
-				return err
-			}
-			if err := writeJSONAtomic(claudeJSONPath, root); err != nil {
-				return err
+			if delta.CreatedClaudeJSON && len(root) == 0 {
+				_ = os.Remove(claudeJSONPath)
+				_ = os.Remove(claudeJSONPath + PrePCSBackupSuffix)
+			} else {
+				if err := writeJSONAtomicWithPerm(claudeJSONPath, root, perm); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
+	permsToRemove := delta.AddedPermissions
+	if delta.ForceRemoveAllMCP && len(permsToRemove) == 0 {
+		permsToRemove = DefaultPermissionAllows
+	}
+	pluginsToRemove := delta.AddedPlugins
+	if delta.ForceRemoveAllMCP && len(pluginsToRemove) == 0 {
+		pluginsToRemove = []string{"engram@engram"}
+	}
+
 	if strings.TrimSpace(settingsJSONPath) != "" {
-		root, existed, rawExisting, err := readJSONObject(settingsJSONPath)
+		root, existed, _, perm, err := readJSONObjectWithPerm(settingsJSONPath, 0o644)
 		if err != nil {
 			return err
 		}
 		if existed {
-			removePCSHooks(root)
-			if !onlyPCSOwned {
+			changed := removePCSHooks(root)
+			if len(permsToRemove) > 0 {
 				if perms, ok := root["permissions"].(map[string]any); ok {
 					existing := ensureStringSlice(perms, "allow")
 					filtered := make([]string, 0, len(existing))
 					for _, item := range existing {
-						if !slices.Contains(DefaultPermissionAllows, item) {
+						if !slices.Contains(permsToRemove, item) {
 							filtered = append(filtered, item)
+						} else {
+							changed = true
 						}
 					}
 					perms["allow"] = filtered
+					if len(filtered) == 0 && delta.CreatedSettingsJSON {
+						delete(perms, "allow")
+					}
+					if len(perms) == 0 && delta.CreatedSettingsJSON {
+						delete(root, "permissions")
+					}
 				}
 			}
-			if err := writeBackup(settingsJSONPath+".bak", rawExisting); err != nil {
-				return err
+			if len(pluginsToRemove) > 0 {
+				if plugins, ok := root["enabledPlugins"].(map[string]any); ok {
+					for _, plug := range pluginsToRemove {
+						if _, exists := plugins[plug]; exists {
+							delete(plugins, plug)
+							changed = true
+						}
+					}
+					if len(plugins) == 0 && delta.CreatedSettingsJSON {
+						delete(root, "enabledPlugins")
+					}
+				}
 			}
-			if err := writeJSONAtomic(settingsJSONPath, root); err != nil {
-				return err
+			if delta.CreatedSettingsJSON && len(root) == 0 {
+				_ = os.Remove(settingsJSONPath)
+				_ = os.Remove(settingsJSONPath + PrePCSBackupSuffix)
+			} else if changed {
+				if err := writeJSONAtomicWithPerm(settingsJSONPath, root, perm); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -213,7 +335,7 @@ func InspectConfiguredServers(claudeJSONPath string) (map[string]bool, error) {
 		ServerContext7:  false,
 		ServerCodeGraph: false,
 	}
-	root, existed, _, err := readJSONObject(claudeJSONPath)
+	root, existed, _, _, err := readJSONObjectWithPerm(claudeJSONPath, 0o600)
 	if err != nil {
 		return status, err
 	}
@@ -246,19 +368,19 @@ func permissionsForComponents(components []string) []string {
 	return out
 }
 
-func ensureSkillRegistryHook(hooks map[string]any, targetDir string) {
+func ensureSkillRegistryHook(hooks map[string]any, targetDir string) bool {
 	rawList, _ := hooks["UserPromptSubmit"].([]any)
 	for _, item := range rawList {
 		if strings.Contains(fmt.Sprint(item), "pcs skill-registry refresh") {
 			// Preserve existing pcs skill-registry hook without duplicating.
-			return
+			return false
 		}
 	}
 
 	cmd := "pcs skill-registry refresh"
 	if strings.TrimSpace(targetDir) != "" {
-		skillsPath := filepath.Join(targetDir, "skills")
-		cmd = fmt.Sprintf("pcs skill-registry refresh --skills-dir %q", skillsPath)
+		skillsPath := strings.ReplaceAll(filepath.ToSlash(filepath.Join(targetDir, "skills")), `\`, "/")
+		cmd = fmt.Sprintf("pcs skill-registry refresh --skills-dir \"%s\"", skillsPath)
 	}
 
 	entry := map[string]any{
@@ -271,47 +393,62 @@ func ensureSkillRegistryHook(hooks map[string]any, targetDir string) {
 		},
 	}
 	hooks["UserPromptSubmit"] = append(rawList, entry)
+	return true
 }
 
-func removePCSHooks(root map[string]any) {
+func removePCSHooks(root map[string]any) bool {
 	hooks, ok := root["hooks"].(map[string]any)
 	if !ok {
-		return
+		return false
 	}
 	rawList, ok := hooks["UserPromptSubmit"].([]any)
 	if !ok {
-		return
+		return false
 	}
+	changed := false
 	filtered := make([]any, 0, len(rawList))
 	for _, item := range rawList {
 		text := fmt.Sprint(item)
 		if strings.Contains(text, "pcs skill-registry refresh") {
+			changed = true
 			continue
 		}
 		filtered = append(filtered, item)
 	}
-	hooks["UserPromptSubmit"] = filtered
+	if len(filtered) == 0 {
+		delete(hooks, "UserPromptSubmit")
+	} else {
+		hooks["UserPromptSubmit"] = filtered
+	}
+	if len(hooks) == 0 {
+		delete(root, "hooks")
+	}
+	return changed
 }
 
-func readJSONObject(path string) (map[string]any, bool, []byte, error) {
+func readJSONObjectWithPerm(path string, defaultPerm os.FileMode) (map[string]any, bool, []byte, os.FileMode, error) {
+	perm := defaultPerm
+	if info, statErr := os.Stat(path); statErr == nil {
+		perm = info.Mode().Perm()
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return make(map[string]any), false, nil, nil
+			return make(map[string]any), false, nil, perm, nil
 		}
-		return nil, false, nil, err
+		return nil, false, nil, perm, err
 	}
 	if len(strings.TrimSpace(string(b))) == 0 {
-		return make(map[string]any), true, b, nil
+		return make(map[string]any), true, b, perm, nil
 	}
 	var obj map[string]any
 	if err := json.Unmarshal(b, &obj); err != nil {
-		return nil, true, b, fmt.Errorf("invalid JSON in %s: %w", path, err)
+		return nil, true, b, perm, fmt.Errorf("invalid JSON in %s: %w", path, err)
 	}
 	if obj == nil {
 		obj = make(map[string]any)
 	}
-	return obj, true, b, nil
+	return obj, true, b, perm, nil
 }
 
 func ensureMap(parent map[string]any, key string) map[string]any {
@@ -344,17 +481,24 @@ func ensureStringSlice(parent map[string]any, key string) []string {
 	}
 }
 
-func writeBackup(backupPath string, content []byte) error {
+// WritePrePCSBackupOnce writes `<path>.pre-pcs.bak` only if it does not already exist,
+// preserving the original pre-install file content across subsequent sync runs.
+func WritePrePCSBackupOnce(path string, content []byte, perm os.FileMode) error {
+	backupPath := path + PrePCSBackupSuffix
+	if _, err := os.Stat(backupPath); err == nil {
+		// Pre-PCS backup already exists; never overwrite it on subsequent syncs.
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(backupPath), 0o755); err != nil {
 		return fmt.Errorf("create backup dir: %w", err)
 	}
-	if err := os.WriteFile(backupPath, content, 0o644); err != nil {
+	if err := os.WriteFile(backupPath, content, perm); err != nil {
 		return fmt.Errorf("write backup %s: %w", backupPath, err)
 	}
 	return nil
 }
 
-func writeJSONAtomic(path string, data map[string]any) error {
+func writeJSONAtomicWithPerm(path string, data map[string]any, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create parent dir for %s: %w", path, err)
 	}
@@ -365,7 +509,7 @@ func writeJSONAtomic(path string, data map[string]any) error {
 	encoded = append(encoded, '\n')
 
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, encoded, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, encoded, perm); err != nil {
 		return fmt.Errorf("write temp JSON %s: %w", tmpPath, err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

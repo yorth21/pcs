@@ -1,4 +1,4 @@
-.PHONY: build test vet clean install
+.PHONY: build test test-race vet clean install
 
 BINARY := bin/pcs
 
@@ -6,6 +6,9 @@ build:
 	go build -o $(BINARY) ./cmd/pcs
 
 test:
+	go test ./...
+
+test-race:
 	go test -v -race ./...
 
 vet:
