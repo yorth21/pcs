@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -107,9 +108,9 @@ func runInstall(args []string, env Env) int {
 	writeHook := fs.Bool("write-hook", false, "Write the UserPromptSubmit skill-registry refresh hook into settings.json")
 	withMCP := fs.Bool("with-mcp", false, "Convenience alias for --mcp-guidance=true --write-mcp-config=true --write-hook=true")
 	launcherDir := fs.String("launcher-dir", "", "Custom launcher installation directory (default: ~/.local/bin or %LOCALAPPDATA%\\pcs\\bin)")
-	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into claude-pcs launcher")
-	withPlugins := fs.Bool("with-plugins", false, "Install required plugins into profile via claude plugin install")
-	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json")
+	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into the claude-pcs launchers: split on whitespace, single or double quotes group words, no escape character; every value is passed literally")
+	withPlugins := fs.Bool("with-plugins", false, "Add the engram marketplace and install the engram@engram plugin into the profile via the claude CLI (remembered by sync)")
+	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json (remembered by sync)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned actions without writing files")
 	asJSON := fs.Bool("json", false, "Output installation report as JSON")
 
@@ -117,7 +118,7 @@ func runInstall(args []string, env Env) int {
 		return 2
 	}
 	overrides := visitedFlags(fs)
-	chosenScope := *scope
+	chosenScope := profileDirImpliesProfile(*scope, overrides)
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
 		overrides["scope"] = true
@@ -146,6 +147,7 @@ func runInstall(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "pcs install failed: %v\n", err)
 		return 1
 	}
+	printWarnings(env.Stderr, rep)
 	if *asJSON {
 		return writeJSONOutput(env.Stdout, rep)
 	}
@@ -167,9 +169,9 @@ func runSync(args []string, env Env) int {
 	writeHook := fs.Bool("write-hook", false, "Override whether the UserPromptSubmit skill-registry hook is written to settings.json")
 	withMCP := fs.Bool("with-mcp", false, "Convenience alias for --mcp-guidance=true --write-mcp-config=true --write-hook=true")
 	launcherDir := fs.String("launcher-dir", "", "Custom launcher installation directory")
-	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into claude-pcs launcher")
-	withPlugins := fs.Bool("with-plugins", false, "Install required plugins into profile via claude plugin install")
-	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json")
+	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into the claude-pcs launchers: split on whitespace, single or double quotes group words, no escape character; every value is passed literally")
+	withPlugins := fs.Bool("with-plugins", false, "Add the engram marketplace and install the engram@engram plugin into the profile via the claude CLI (remembered by sync)")
+	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json (remembered by sync)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned sync actions without writing files")
 	asJSON := fs.Bool("json", false, "Output sync report as JSON")
 
@@ -185,6 +187,42 @@ func runSync(args []string, env Env) int {
 		chosenScope = installer.ScopeProfile
 		overrides["scope"] = true
 	}
+	if chosenScope == "" && overrides["profile-dir"] {
+		chosenScope = installer.ScopeProfile
+		overrides["scope"] = true
+	}
+	chosenProfileDir := *profileDir
+	chosenTargetDir := *targetDir
+
+	// Without any explicit target selector, sync only existing installs found via
+	// their .pcs-state.json; it never falls back to creating a global install.
+	if chosenScope == "" && !overrides["target-dir"] && strings.TrimSpace(os.Getenv("PCS_INSTALL_SCOPE")) == "" {
+		found, err := installer.DiscoverInstalls(installer.Options{HomeDir: env.HomeDir, ClaudeConfigDir: env.ClaudeConfigDir})
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "pcs sync failed: %v\n", err)
+			return 1
+		}
+		switch len(found) {
+		case 0:
+			fmt.Fprintf(env.Stderr, "pcs sync failed: no pcs installation found (checked the global target and the default profile); run 'pcs install' first, or pass --scope, --profile-dir, or --target-dir\n")
+			return 1
+		case 1:
+			chosenScope = found[0].Scope
+			overrides["scope"] = true
+			switch found[0].Scope {
+			case installer.ScopeProfile:
+				chosenProfileDir = found[0].TargetDir
+			case installer.ScopeWorkspace:
+				chosenTargetDir = found[0].TargetDir
+			}
+		default:
+			fmt.Fprintf(env.Stderr, "pcs sync failed: multiple pcs installations found; re-run with --scope (and --profile-dir for a custom profile) to choose one:\n")
+			for _, inst := range found {
+				fmt.Fprintf(env.Stderr, "  - %s: %s\n", inst.Scope, inst.TargetDir)
+			}
+			return 1
+		}
+	}
 
 	var mcpGuidancePtr *bool
 	if overrides["mcp-guidance"] {
@@ -193,8 +231,8 @@ func runSync(args []string, env Env) int {
 
 	rep, err := installer.Sync(installer.Options{
 		Scope:           chosenScope,
-		TargetDir:       *targetDir,
-		ProfileDir:      *profileDir,
+		TargetDir:       chosenTargetDir,
+		ProfileDir:      chosenProfileDir,
 		HomeDir:         env.HomeDir,
 		ClaudeConfigDir: env.ClaudeConfigDir,
 		Adapter:         *adapter,
@@ -214,6 +252,7 @@ func runSync(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "pcs sync failed: %v\n", err)
 		return 1
 	}
+	printWarnings(env.Stderr, rep)
 	if *asJSON {
 		return writeJSONOutput(env.Stdout, rep)
 	}
@@ -228,14 +267,15 @@ func runUninstall(args []string, env Env) int {
 	profileAlias := fs.Bool("profile", false, "Shorthand for --scope profile")
 	profileDir := fs.String("profile-dir", "", "Custom profile directory when using --scope profile")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
-	removeMCP := fs.Bool("remove-mcp", false, "Also remove all engram, context7, and codegraph MCP entries in global/workspace scopes")
+	removeMCP := fs.Bool("remove-mcp", false, "Remove pcs MCP servers, permissions, and plugins recorded in .pcs-state.json (an empty record removes nothing); refuses without a record unless --force")
+	force := fs.Bool("force", false, "With --remove-mcp and no install record, remove the default engram, context7, and codegraph servers, their permissions, and the engram@engram plugin (prints a warning)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned uninstall actions without removing files")
 	asJSON := fs.Bool("json", false, "Output uninstall report as JSON")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	chosenScope := *scope
+	chosenScope := profileDirImpliesProfile(*scope, visitedFlags(fs))
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
 	}
@@ -247,12 +287,14 @@ func runUninstall(args []string, env Env) int {
 		HomeDir:         env.HomeDir,
 		ClaudeConfigDir: env.ClaudeConfigDir,
 		RemoveMCP:       *removeMCP,
+		Force:           *force,
 		DryRun:          *dryRun,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "pcs uninstall failed: %v\n", err)
 		return 1
 	}
+	printWarnings(env.Stderr, rep)
 	if *asJSON {
 		return writeJSONOutput(env.Stdout, rep)
 	}
@@ -272,7 +314,7 @@ func runStatus(args []string, env Env) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	chosenScope := *scope
+	chosenScope := profileDirImpliesProfile(*scope, visitedFlags(fs))
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
 	}
@@ -307,6 +349,16 @@ func runStatus(args []string, env Env) int {
 	return 0
 }
 
+// profileDirImpliesProfile returns the profile scope when --profile-dir was given
+// without an explicit --scope or PCS_INSTALL_SCOPE, so a profile directory is
+// never silently ignored in favor of the global target.
+func profileDirImpliesProfile(scope string, visited map[string]bool) string {
+	if visited["profile-dir"] && !visited["scope"] && strings.TrimSpace(os.Getenv("PCS_INSTALL_SCOPE")) == "" {
+		return installer.ScopeProfile
+	}
+	return scope
+}
+
 func visitedFlags(fs *flag.FlagSet) map[string]bool {
 	m := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) {
@@ -328,7 +380,7 @@ func runDoctor(args []string, env Env) int {
 		return 2
 	}
 
-	chosenScope := *scope
+	chosenScope := profileDirImpliesProfile(*scope, visitedFlags(fs))
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
 	}
@@ -489,7 +541,17 @@ func validateCodeGraphRoot(root, homeDir string) (string, error) {
 		}
 	}
 
-	forbiddenTempRoots := []string{"/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp"}
+	// Temporary directories are refused before the existence check so the
+	// refusal reason is stable on every platform. The Unix roots only apply off
+	// Windows, where "/tmp" resolves to an unrelated "<drive>:\tmp".
+	var forbiddenTempRoots []string
+	if runtime.GOOS == "windows" {
+		if systemRoot := strings.TrimSpace(os.Getenv("SystemRoot")); systemRoot != "" {
+			forbiddenTempRoots = append(forbiddenTempRoots, filepath.Join(systemRoot, "Temp"))
+		}
+	} else {
+		forbiddenTempRoots = append(forbiddenTempRoots, "/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp")
+	}
 	if sysTmp := strings.TrimSpace(os.TempDir()); sysTmp != "" {
 		if absTmp, err := filepath.Abs(sysTmp); err == nil {
 			forbiddenTempRoots = append(forbiddenTempRoots, absTmp)
@@ -559,6 +621,14 @@ func printReport(w io.Writer, rep *installer.Report) {
 	}
 }
 
+// printWarnings writes every report warning to w (stderr), so they stay visible
+// even when stdout carries --json output.
+func printWarnings(w io.Writer, rep *installer.Report) {
+	for _, warning := range rep.Warnings {
+		fmt.Fprintf(w, "warning: %s\n", warning)
+	}
+}
+
 func printBoolMap(w io.Writer, title string, m map[string]bool) {
 	fmt.Fprintf(w, "  %s:\n", title)
 	keys := make([]string, 0, len(m))
@@ -579,7 +649,8 @@ Usage:
 
 Commands:
   install                  Install pcs orchestrator, 5 native subagents, skills, and optional MCP config
-  sync                     Re-sync embedded brain files and markers into an existing installation
+  sync                     Re-sync an existing installation (never creates one; without --scope it
+                           discovers existing installs and requires --scope when several exist)
   uninstall                Cleanly remove pcs-owned markers, native subagents, and skills
   status                   Inspect installed markers, native subagents, skills, and MCP servers
   doctor                   Run diagnostic checks on MCP binaries, embedded brain, and target dir
@@ -590,13 +661,15 @@ Commands:
 
 Key Flags (install / sync / uninstall / status):
   --scope global|workspace|profile   Target deployment mode (default: global -> ~/.claude or $CLAUDE_CONFIG_DIR; env: PCS_INSTALL_SCOPE)
-  --profile-dir <dir>                Custom profile directory when using --scope profile
+  --profile-dir <dir>                Profile directory (default: ~/.claude-pcs; implies --scope profile; ignores $CLAUDE_CONFIG_DIR)
   --target-dir <dir>                 Override target configuration directory
   --adapter <name>                   Frontend stack adapter (default: react-shadcn)
   --persona gentleman|neutral        Coordinator persona variant (default: gentleman)
   --mcp-guidance=true|false          Inject pcs:codegraph-guidance and pcs:engram-protocol into CLAUDE.md (default: true)
   --write-mcp-config                 Write missing engram, context7, and codegraph MCP entries into .claude.json and settings.json (default: false)
   --write-hook                       Write UserPromptSubmit skill-registry refresh hook into settings.json (default: false)
+  --remove-mcp                       (uninstall) Remove only the MCP servers, permissions, and plugins pcs recorded as added
+  --force                            (uninstall) With --remove-mcp and no install record, remove the default MCP entries anyway
   --dry-run                          Preview planned actions without modifying disk
   --json                             Emit structured JSON output
 `)

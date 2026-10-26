@@ -144,7 +144,8 @@ All automated `mem_save` calls inside `pcs` phases set `capture_prompt: false` (
 2. `PCS_INSTALL_SCOPE` environment variable fallback.
 3. Default scope: **`global`**.
    - When `scope == "global"` and `--target-dir` is omitted: if `CLAUDE_CONFIG_DIR` is set in the environment, `pcs` targets `$CLAUDE_CONFIG_DIR` (writing MCP servers to `$CLAUDE_CONFIG_DIR/.claude.json`); otherwise it targets `$HOME/.claude` (writing MCP servers to `$HOME/.claude.json`).
-   - When `scope == "profile"` and `--target-dir` is omitted: `pcs` checks `--profile-dir`, then `$CLAUDE_CONFIG_DIR`, and defaults to `$HOME/.claude-pcs`.
+   - When `scope == "profile"` and `--target-dir` is omitted: `pcs` uses `--profile-dir` and defaults to `$HOME/.claude-pcs`. Profile scope ignores `$CLAUDE_CONFIG_DIR` and refuses any profile target that resolves (after `Abs`/`Clean`/symlink resolution, case-insensitively on Windows) to `$HOME/.claude` or to `$CLAUDE_CONFIG_DIR`, unless that directory already holds a pcs profile install (as inside a `claude-pcs` session).
+   - `pcs sync` never creates a new install: it refuses when the resolved target has no `.pcs-state.json`. Without an explicit selector (`--scope`, `--profile`, `--profile-dir`, `--target-dir`, or `PCS_INSTALL_SCOPE`), it discovers installs in the global target and the default profile, syncs the only one found, and requires `--scope` when several exist.
 
 ### Granular Prompt Guidance, MCP Config, and Hook Wiring
 
@@ -192,11 +193,13 @@ pcs install --scope workspace --target-dir /path/to/frontend-repo/.claude
 pcs install --scope profile --profile-dir ~/.claude-pcs --adapter react-shadcn --persona gentleman
 ```
 
-1. Creates `~/.claude-pcs` (or `--profile-dir` / `$CLAUDE_CONFIG_DIR`) with `CLAUDE.md`, `agents/pcs-*.md`, `skills/{_shared,pcs-core,pcs-adapter-react-shadcn}`, and optional `.claude.json` / `settings.json`.
+1. Creates `~/.claude-pcs` (or `--profile-dir`) with `CLAUDE.md`, `agents/pcs-*.md`, `skills/{_shared,pcs-core,pcs-adapter-react-shadcn}`, and optional `.claude.json` / `settings.json`.
 2. Generates cross-platform, process-scoped launchers in `<profile-dir>/bin/` and automatically installs them into the user's bin directory on `PATH` (`~/.local/bin` on Unix/macOS, `%LOCALAPPDATA%\pcs\bin` on Windows, or `--launcher-dir <dir>`):
-   - `claude-pcs` (POSIX shell script using `exec env CLAUDE_CONFIG_DIR=... claude --mcp-config ... "$@"`)
-   - `claude-pcs.cmd` (Windows Command Prompt batch script using `setlocal` / `endlocal` to prevent environment variable leakage)
-   - `claude-pcs.ps1` (Windows PowerShell script using `try { ... } finally { $env:CLAUDE_CONFIG_DIR = $prev }` with single-quoted path escaping)
+   - `claude-pcs` (POSIX shell script using `exec env CLAUDE_CONFIG_DIR='...' 'claude' <launcher-args> "$@" --mcp-config '...'`, every value single-quoted)
+   - `claude-pcs.cmd` (Windows Command Prompt batch script using `setlocal DisableDelayedExpansion` / `endlocal` to prevent environment variable leakage, every value double-quoted with `%` doubled)
+   - `claude-pcs.ps1` (Windows PowerShell script using `try { ... } finally { $env:CLAUDE_CONFIG_DIR = $prev }`, every value single-quoted)
+
+   User arguments always precede `--mcp-config <profile-dir>/shared-mcp.json`, which comes last with a single value because Claude Code parses `--mcp-config` as a variadic option. `--launcher-args` is split into individual arguments (unquoted whitespace separates words; single or double quotes group words; backslashes and shell metacharacters such as `$`, backtick, `%`, and `^` are literal; an unterminated quote is an error) and each argument is quoted for each launcher syntax, so it reaches `claude` exactly as written.
 3. Reuses main profile MCP servers without touching `~/.claude.json`: reads `~/.claude.json` and writes `<profile-dir>/shared-mcp.json` with restricted permissions (0600), passing `--mcp-config <profile-dir>/shared-mcp.json` directly in the launcher.
-4. Inherits custom `statusLine` from `~/.claude/settings.json` automatically (unless `--no-statusline` is specified) and supports plugin migration with `--with-plugins` or external plugin managers like `herdr` (`herdr integration install claude`).
-5. Guides the user to run `claude-pcs` followed by `/login` for first-run profile authentication. `pcs doctor --scope profile` validates launcher presence on `PATH`, `shared-mcp.json` integrity, and `.credentials.json` presence without reading secret content.
+4. Inherits custom `statusLine` from `~/.claude/settings.json` automatically (unless `--no-statusline` is specified) and, with `--with-plugins`, runs `claude plugin marketplace add Gentleman-Programming/engram` followed by `claude plugin install engram@engram` under the profile `CLAUDE_CONFIG_DIR`, reporting each failure with the exact per-OS manual command. `--no-statusline` and `--with-plugins` are persisted in `.pcs-state.json` and honored by `pcs sync` unless overridden.
+5. Guides the user to run `claude-pcs` followed by `/login` for first-run profile authentication. `pcs doctor --scope profile` validates launcher presence on `PATH`, `shared-mcp.json` presence and drift against the main profile `mcpServers`, `enabledPlugins["engram@engram"]` when plugins were requested, and `.credentials.json` presence without reading secret content (on macOS a missing file is reported as unknown because credentials live in the Keychain).

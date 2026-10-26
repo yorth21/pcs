@@ -8,6 +8,26 @@ import (
 	"github.com/yorth21/pcs/internal/installer"
 )
 
+// isolateDoctorEnv points every home/config environment variable at a fresh
+// temporary home and PATH at an empty directory, so doctor tests (which also
+// install profiles) can never read or mutate the real user profile.
+func isolateDoctorEnv(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("PCS_INSTALL_SCOPE", "")
+	t.Setenv("PATH", t.TempDir())
+	return home
+}
+
 func TestRunDoctor(t *testing.T) {
 	stubAllBinariesFound := func(file string) (string, error) {
 		return "/usr/local/bin/" + file, nil
@@ -67,7 +87,7 @@ func TestRunDoctor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpHome := t.TempDir()
+			tmpHome := isolateDoctorEnv(t)
 			target := tt.setupTarget(t, tmpHome)
 
 			rep, err := Run(Options{
@@ -86,7 +106,7 @@ func TestRunDoctor(t *testing.T) {
 }
 
 func TestDoctorProfileScopeChecks(t *testing.T) {
-	tmpHome := t.TempDir()
+	tmpHome := isolateDoctorEnv(t)
 	target := filepath.Join(tmpHome, ".claude-pcs")
 
 	if _, err := installer.Install(installer.Options{

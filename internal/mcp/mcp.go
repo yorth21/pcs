@@ -1,11 +1,14 @@
 package mcp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -58,7 +61,10 @@ type UnmergeDelta struct {
 	AddedPermissions    []string
 	AddedPlugins        []string
 	AddedHook           bool
-	ForceRemoveAllMCP   bool
+	// ForceRemoveAllMCP additionally removes the default pcs servers, permissions,
+	// and engram@engram plugin even when they were not recorded as pcs-added. It
+	// must only be set on explicit user request (uninstall --remove-mcp --force).
+	ForceRemoveAllMCP bool
 }
 
 // ResolveEngramBinary returns the preferred engram executable path, checking
@@ -232,11 +238,17 @@ func UnmergeMCP(claudeJSONPath, settingsJSONPath string, onlyPCSOwned bool) erro
 }
 
 // UnmergeWithDelta removes only the MCP servers, permissions, plugins, and hooks
-// recorded as added by pcs (or all default PCS MCP servers when ForceRemoveAllMCP is true).
+// recorded as added by pcs; an empty record removes nothing. When
+// ForceRemoveAllMCP is true, the default pcs servers, permissions, and plugin
+// are removed as well. Files are rewritten only when something changed.
 func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelta) error {
-	serversToRemove := delta.AddedMCPServers
-	if delta.ForceRemoveAllMCP && len(serversToRemove) == 0 {
-		serversToRemove = DefaultComponents
+	serversToRemove := slices.Clone(delta.AddedMCPServers)
+	permsToRemove := slices.Clone(delta.AddedPermissions)
+	pluginsToRemove := slices.Clone(delta.AddedPlugins)
+	if delta.ForceRemoveAllMCP {
+		serversToRemove = appendMissing(serversToRemove, DefaultComponents...)
+		permsToRemove = appendMissing(permsToRemove, DefaultPermissionAllows...)
+		pluginsToRemove = appendMissing(pluginsToRemove, "engram@engram")
 	}
 
 	if strings.TrimSpace(claudeJSONPath) != "" && (len(serversToRemove) > 0 || delta.CreatedClaudeJSON) {
@@ -245,32 +257,28 @@ func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelt
 			return err
 		}
 		if existed {
+			changed := false
 			if mcpServers, ok := root["mcpServers"].(map[string]any); ok {
 				for _, comp := range serversToRemove {
-					delete(mcpServers, comp)
+					if _, present := mcpServers[comp]; present {
+						delete(mcpServers, comp)
+						changed = true
+					}
 				}
 				if len(mcpServers) == 0 && delta.CreatedClaudeJSON {
 					delete(root, "mcpServers")
+					changed = true
 				}
 			}
 			if delta.CreatedClaudeJSON && len(root) == 0 {
+				// Any .pre-pcs.bak is kept: uninstall never deletes backups.
 				_ = os.Remove(claudeJSONPath)
-				_ = os.Remove(claudeJSONPath + PrePCSBackupSuffix)
-			} else {
+			} else if changed {
 				if err := writeJSONAtomicWithPerm(claudeJSONPath, root, perm); err != nil {
 					return err
 				}
 			}
 		}
-	}
-
-	permsToRemove := delta.AddedPermissions
-	if delta.ForceRemoveAllMCP && len(permsToRemove) == 0 {
-		permsToRemove = DefaultPermissionAllows
-	}
-	pluginsToRemove := delta.AddedPlugins
-	if delta.ForceRemoveAllMCP && len(pluginsToRemove) == 0 {
-		pluginsToRemove = []string{"engram@engram"}
 	}
 
 	if strings.TrimSpace(settingsJSONPath) != "" {
@@ -314,8 +322,8 @@ func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelt
 				}
 			}
 			if delta.CreatedSettingsJSON && len(root) == 0 {
+				// Any .pre-pcs.bak is kept: uninstall never deletes backups.
 				_ = os.Remove(settingsJSONPath)
-				_ = os.Remove(settingsJSONPath + PrePCSBackupSuffix)
 			} else if changed {
 				if err := writeJSONAtomicWithPerm(settingsJSONPath, root, perm); err != nil {
 					return err
@@ -325,6 +333,15 @@ func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelt
 	}
 
 	return nil
+}
+
+func appendMissing(list []string, items ...string) []string {
+	for _, item := range items {
+		if !slices.Contains(list, item) {
+			list = append(list, item)
+		}
+	}
+	return list
 }
 
 // InspectConfiguredServers returns which of the 3 foundational MCP servers are
@@ -610,3 +627,69 @@ func RemoveStatusLine(targetSettingsJSONPath string) error {
 	return writeJSONAtomicWithPerm(targetSettingsJSONPath, targetRoot, perm)
 }
 
+// StatusLineSHA256 returns the SHA-256 hex digest of the JSON encoding of the
+// statusLine value in settingsJSONPath and whether a statusLine is present.
+// encoding/json sorts map keys, so equal values always yield equal digests.
+func StatusLineSHA256(settingsJSONPath string) (string, bool, error) {
+	if _, err := os.Stat(settingsJSONPath); os.IsNotExist(err) {
+		return "", false, nil
+	}
+	root, _, _, _, err := readJSONObjectWithPerm(settingsJSONPath, 0o644)
+	if err != nil {
+		return "", false, err
+	}
+	value, ok := root["statusLine"]
+	if !ok {
+		return "", false, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", true, fmt.Errorf("encode statusLine in %s: %w", settingsJSONPath, err)
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), true, nil
+}
+
+// PluginEnabled reports whether enabledPlugins[plugin] is true in settingsJSONPath.
+// A missing file or key reports false.
+func PluginEnabled(settingsJSONPath, plugin string) (bool, error) {
+	if _, err := os.Stat(settingsJSONPath); os.IsNotExist(err) {
+		return false, nil
+	}
+	root, _, _, _, err := readJSONObjectWithPerm(settingsJSONPath, 0o644)
+	if err != nil {
+		return false, err
+	}
+	plugins, _ := root["enabledPlugins"].(map[string]any)
+	enabled, _ := plugins[plugin].(bool)
+	return enabled, nil
+}
+
+// SharedMCPDrift compares the mcpServers in sharedMCPPath with the main
+// profile's mcpServers and returns the sorted names of servers that are
+// missing, extra, or different. It returns nil when they match, or when the main
+// profile defines no servers (shared-mcp.json then holds the pcs defaults).
+func SharedMCPDrift(sharedMCPPath, mainClaudeJSONPath string) ([]string, error) {
+	mainServers, found, err := ReadMainProfileMCPServers(mainClaudeJSONPath)
+	if err != nil || !found {
+		return nil, err
+	}
+	root, _, _, _, err := readJSONObjectWithPerm(sharedMCPPath, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	shared, _ := root["mcpServers"].(map[string]any)
+	var drift []string
+	for name, def := range mainServers {
+		if got, ok := shared[name]; !ok || !reflect.DeepEqual(got, def) {
+			drift = append(drift, name)
+		}
+	}
+	for name := range shared {
+		if _, ok := mainServers[name]; !ok {
+			drift = append(drift, name)
+		}
+	}
+	slices.Sort(drift)
+	return drift, nil
+}

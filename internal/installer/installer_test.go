@@ -22,7 +22,7 @@ func TestInstallScopesAndLifecycle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fakeHome := t.TempDir()
+			fakeHome := isolateEnv(t)
 			var targetDir string
 			switch tt.scope {
 			case ScopeProfile:
@@ -134,7 +134,7 @@ func TestInstallScopesAndLifecycle(t *testing.T) {
 }
 
 func TestDefaultInstallDoesNotTouchClaudeJSONOrSettingsJSON(t *testing.T) {
-	fakeHome := t.TempDir()
+	fakeHome := isolateEnv(t)
 	globalDir := filepath.Join(fakeHome, ".claude")
 
 	// Default install options: MCPGuidance=nil (defaults to true), WriteMCPConfig=false, WriteHook=false.
@@ -180,7 +180,7 @@ func TestDefaultInstallDoesNotTouchClaudeJSONOrSettingsJSON(t *testing.T) {
 
 func TestGranularFlagsWriteMCPConfigWriteHookAndMCPGuidanceFalse(t *testing.T) {
 	t.Run("--mcp-guidance=false omits codegraph-guidance and engram-protocol", func(t *testing.T) {
-		fakeHome := t.TempDir()
+		fakeHome := isolateEnv(t)
 		globalDir := filepath.Join(fakeHome, ".claude")
 		opts := Options{
 			Scope:       ScopeGlobal,
@@ -204,7 +204,7 @@ func TestGranularFlagsWriteMCPConfigWriteHookAndMCPGuidanceFalse(t *testing.T) {
 	})
 
 	t.Run("--write-mcp-config without --write-hook updates .claude.json and permissions without adding hook", func(t *testing.T) {
-		fakeHome := t.TempDir()
+		fakeHome := isolateEnv(t)
 		globalDir := filepath.Join(fakeHome, ".claude")
 		opts := Options{
 			Scope:          ScopeGlobal,
@@ -235,7 +235,7 @@ func TestGranularFlagsWriteMCPConfigWriteHookAndMCPGuidanceFalse(t *testing.T) {
 	})
 
 	t.Run("--write-hook without --write-mcp-config adds hook without touching .claude.json", func(t *testing.T) {
-		fakeHome := t.TempDir()
+		fakeHome := isolateEnv(t)
 		globalDir := filepath.Join(fakeHome, ".claude")
 		opts := Options{
 			Scope:          ScopeGlobal,
@@ -265,7 +265,7 @@ func TestGranularFlagsWriteMCPConfigWriteHookAndMCPGuidanceFalse(t *testing.T) {
 }
 
 func TestSyncHonorsExplicitFlagOverridesAndRemovesDisabledMarkers(t *testing.T) {
-	fakeHome := t.TempDir()
+	fakeHome := isolateEnv(t)
 	globalDir := filepath.Join(fakeHome, ".claude")
 
 	// 1. Initial install with MCPGuidance=true (default).
@@ -311,7 +311,7 @@ func TestSyncHonorsExplicitFlagOverridesAndRemovesDisabledMarkers(t *testing.T) 
 }
 
 func TestUninstallRemovesAllPCSMarkersByteForByteAndPreservesPreExistingEngram(t *testing.T) {
-	fakeHome := t.TempDir()
+	fakeHome := isolateEnv(t)
 	globalDir := filepath.Join(fakeHome, ".claude")
 	claudeJSON := filepath.Join(fakeHome, ".claude.json")
 
@@ -407,8 +407,8 @@ func TestUninstallRemovesAllPCSMarkersByteForByteAndPreservesPreExistingEngram(t
 	}
 }
 
-func TestCustomProfileDirAndPowerShellSingleQuoteEscaping(t *testing.T) {
-	fakeHome := t.TempDir()
+func TestCustomProfileDirWithApostropheIsUsedInInstalledAssets(t *testing.T) {
+	fakeHome := isolateEnv(t)
 	customProfile := filepath.Join(fakeHome, "O'Reilly Profile", ".claude-custom")
 
 	opts := Options{
@@ -422,16 +422,6 @@ func TestCustomProfileDirAndPowerShellSingleQuoteEscaping(t *testing.T) {
 	}
 	if rep.TargetDir != customProfile {
 		t.Fatalf("rep.TargetDir = %q, want %q", rep.TargetDir, customProfile)
-	}
-
-	// Verify PowerShell launcher uses single quotes with '' escaping for apostrophes.
-	ps1Bytes, err := os.ReadFile(filepath.Join(customProfile, "bin", "claude-pcs.ps1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ps1Text := string(ps1Bytes)
-	if !strings.Contains(ps1Text, "O''Reilly Profile") {
-		t.Errorf("expected single quote in path to be escaped as '' in PowerShell launcher, got:\n%s", ps1Text)
 	}
 
 	// Verify installed CLAUDE.md and native agents reference the custom profile skills path instead of ~/.claude-pcs/skills.
@@ -483,18 +473,18 @@ func TestDefaultGlobalScopeAndEnvironmentFallbacks(t *testing.T) {
 			wantClaudeJSONIn: "target",
 		},
 		{
-			name:               "uses CLAUDE_CONFIG_DIR when scope is profile and profile-dir/target-dir are empty",
+			name:               "ignores CLAUDE_CONFIG_DIR when scope is profile and profile-dir/target-dir are empty",
 			envInstallScope:    ScopeProfile,
 			envClaudeConfigDir: "env-profile-dir",
 			wantScope:          ScopeProfile,
-			wantTargetSuffix:   "env-profile-dir",
+			wantTargetSuffix:   ".claude-pcs",
 			wantClaudeJSONIn:   "target",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fakeHome := t.TempDir()
+			fakeHome := isolateEnv(t)
 			t.Setenv("PCS_INSTALL_SCOPE", tt.envInstallScope)
 
 			var customCfg string
@@ -540,7 +530,7 @@ func TestDefaultGlobalScopeAndEnvironmentFallbacks(t *testing.T) {
 }
 
 func TestProfileScopeLauncherIsolationAndSharedMCP(t *testing.T) {
-	fakeHome := t.TempDir()
+	fakeHome := isolateEnv(t)
 	mainClaudeJSONPath := filepath.Join(fakeHome, ".claude.json")
 	mainSettingsDir := filepath.Join(fakeHome, ".claude")
 	if err := os.MkdirAll(mainSettingsDir, 0o755); err != nil {
@@ -603,33 +593,14 @@ func TestProfileScopeLauncherIsolationAndSharedMCP(t *testing.T) {
 		t.Errorf("expected statusLine to be copied into profile settings.json:\n%s", string(profSettingsData))
 	}
 
-	// 4. Verify launchers were created in launcherDir with environment isolation and --mcp-config
+	// 4. Verify launchers were created in launcherDir. Their runtime behavior
+	// (environment isolation, argument order, quoting) is covered by the
+	// executable launcher tests in launcher_test.go.
 	shPath := filepath.Join(launcherDir, "claude-pcs")
-	cmdPath := filepath.Join(launcherDir, "claude-pcs.cmd")
-	ps1Path := filepath.Join(launcherDir, "claude-pcs.ps1")
-
-	shBytes, err := os.ReadFile(shPath)
-	if err != nil {
-		t.Fatalf("missing POSIX launcher: %v", err)
-	}
-	if !strings.Contains(string(shBytes), "exec env CLAUDE_CONFIG_DIR=") || !strings.Contains(string(shBytes), "--mcp-config") || !strings.Contains(string(shBytes), "--dangerously-skip-permissions") {
-		t.Errorf("POSIX launcher missing exec env or --mcp-config:\n%s", string(shBytes))
-	}
-
-	cmdBytes, err := os.ReadFile(cmdPath)
-	if err != nil {
-		t.Fatalf("missing CMD launcher: %v", err)
-	}
-	if !strings.Contains(string(cmdBytes), "setlocal") || !strings.Contains(string(cmdBytes), "endlocal") || !strings.Contains(string(cmdBytes), "shared-mcp.json") {
-		t.Errorf("CMD launcher missing setlocal/endlocal or shared-mcp.json:\n%s", string(cmdBytes))
-	}
-
-	ps1Bytes, err := os.ReadFile(ps1Path)
-	if err != nil {
-		t.Fatalf("missing PS1 launcher: %v", err)
-	}
-	if !strings.Contains(string(ps1Bytes), "try {") || !strings.Contains(string(ps1Bytes), "finally {") || !strings.Contains(string(ps1Bytes), "$env:CLAUDE_CONFIG_DIR = $prev") {
-		t.Errorf("PS1 launcher missing try/finally environment restoration:\n%s", string(ps1Bytes))
+	for _, p := range []string{shPath, filepath.Join(launcherDir, "claude-pcs.cmd"), filepath.Join(launcherDir, "claude-pcs.ps1")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("missing launcher %s: %v", p, err)
+		}
 	}
 
 	// 5. Verify NextSteps guidance

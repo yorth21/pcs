@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestCLISubcommands(t *testing.T) {
-	fakeHome := t.TempDir()
+	fakeHome := isolateCLIEnv(t)
 	profileDir := filepath.Join(fakeHome, ".claude-pcs")
 
 	tests := []struct {
@@ -131,7 +132,7 @@ func TestCLISubcommands(t *testing.T) {
 
 func TestCLIDefaultGlobalScopeAndEnvOverrides(t *testing.T) {
 	t.Run("default install without flags uses global scope (<HomeDir>/.claude) and does not touch .claude.json", func(t *testing.T) {
-		fakeHome := t.TempDir()
+		fakeHome := isolateCLIEnv(t)
 		t.Setenv("PCS_INSTALL_SCOPE", "")
 		t.Setenv("CLAUDE_CONFIG_DIR", "")
 
@@ -162,7 +163,7 @@ func TestCLIDefaultGlobalScopeAndEnvOverrides(t *testing.T) {
 	})
 
 	t.Run("default global install respects CLAUDE_CONFIG_DIR when set", func(t *testing.T) {
-		fakeHome := t.TempDir()
+		fakeHome := isolateCLIEnv(t)
 		customConfig := filepath.Join(fakeHome, "isolated-claude")
 		t.Setenv("PCS_INSTALL_SCOPE", "")
 		t.Setenv("CLAUDE_CONFIG_DIR", customConfig)
@@ -190,7 +191,7 @@ func TestCLIDefaultGlobalScopeAndEnvOverrides(t *testing.T) {
 	})
 
 	t.Run("PCS_INSTALL_SCOPE overrides default scope when --scope is omitted", func(t *testing.T) {
-		fakeHome := t.TempDir()
+		fakeHome := isolateCLIEnv(t)
 		t.Setenv("PCS_INSTALL_SCOPE", "profile")
 		t.Setenv("CLAUDE_CONFIG_DIR", "")
 
@@ -215,19 +216,21 @@ func TestCLIDefaultGlobalScopeAndEnvOverrides(t *testing.T) {
 }
 
 func TestCLICodeGraphInit(t *testing.T) {
-	fakeHome := t.TempDir()
+	fakeHome := isolateCLIEnv(t)
 	validRepo := filepath.Join(fakeHome, "projects", "frontend-app")
 	if err := os.MkdirAll(validRepo, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	tests := []struct {
+	type codeGraphInitCase struct {
 		name         string
 		args         []string
 		wantExitCode int
 		wantStderr   string
 		wantStdout   string
-	}{
+	}
+
+	tests := []codeGraphInitCase{
 		{
 			name:         "succeeds on valid project root and invokes codegraph init",
 			args:         []string{"codegraph", "init", "--cwd", validRepo},
@@ -259,23 +262,24 @@ func TestCLICodeGraphInit(t *testing.T) {
 			wantStderr:   "cannot initialize CodeGraph in temporary directory",
 		},
 		{
-			name:         "refuses to initialize in /tmp",
-			args:         []string{"codegraph", "init", "--cwd", "/tmp"},
-			wantExitCode: 1,
-			wantStderr:   "cannot initialize CodeGraph in temporary directory",
-		},
-		{
-			name:         "refuses to initialize in /var/tmp",
-			args:         []string{"codegraph", "init", "--cwd", "/var/tmp"},
-			wantExitCode: 1,
-			wantStderr:   "cannot initialize CodeGraph in temporary directory",
-		},
-		{
 			name:         "refuses to initialize in non-existent directory",
 			args:         []string{"codegraph", "init", "--cwd", filepath.Join(fakeHome, "missing-dir")},
 			wantExitCode: 1,
 			wantStderr:   "does not exist",
 		},
+	}
+
+	if runtime.GOOS != "windows" {
+		// The Unix temporary roots are only meaningful off Windows; os.TempDir()
+		// above covers the platform temporary directory everywhere.
+		for _, dir := range []string{"/tmp", "/var/tmp"} {
+			tests = append(tests, codeGraphInitCase{
+				name:         "refuses to initialize in " + dir,
+				args:         []string{"codegraph", "init", "--cwd", dir},
+				wantExitCode: 1,
+				wantStderr:   "cannot initialize CodeGraph in temporary directory",
+			})
+		}
 	}
 
 	for _, tt := range tests {

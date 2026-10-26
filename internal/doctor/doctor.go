@@ -5,17 +5,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/yorth21/pcs/internal/assets"
 	"github.com/yorth21/pcs/internal/installer"
+	"github.com/yorth21/pcs/internal/mcp"
 )
 
 // CheckResult describes a single diagnostic check.
 type CheckResult struct {
 	Category string `json:"category"`
 	Name     string `json:"name"`
-	Status   string `json:"status"` // "ok", "warn", "error"
+	Status   string `json:"status"` // "ok", "warn", "error", "unknown"
 	Detail   string `json:"detail"`
 }
 
@@ -33,6 +35,8 @@ type Options struct {
 	ProfileDir   string
 	HomeDir      string
 	LookPathFunc func(file string) (string, error)
+	// GOOS selects platform-specific checks; empty means runtime.GOOS.
+	GOOS string
 }
 
 // Run executes all pcs ecosystem health checks.
@@ -40,6 +44,10 @@ func Run(opts Options) (*DiagnosticReport, error) {
 	lookPath := opts.LookPathFunc
 	if lookPath == nil {
 		lookPath = exec.LookPath
+	}
+	goos := opts.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
 	}
 
 	report := &DiagnosticReport{
@@ -207,15 +215,43 @@ func Run(opts Options) (*DiagnosticReport, error) {
 			sharedMCP := filepath.Join(targetDir, "shared-mcp.json")
 			if _, err := os.Stat(sharedMCP); err == nil {
 				addCheck("profile", "shared-mcp.json", "ok", "shared MCP configuration file present")
+				// Profile check 2b: shared-mcp.json mirrors the main profile's mcpServers.
+				drift, err := mcp.SharedMCPDrift(sharedMCP, status.MainClaudeJSONPath)
+				switch {
+				case err != nil:
+					addCheck("profile", "shared-mcp-sync", "warn", fmt.Sprintf("cannot compare with the main profile: %v", err))
+				case len(drift) > 0:
+					addCheck("profile", "shared-mcp-sync", "warn", fmt.Sprintf("shared-mcp.json differs from the main profile for: %s. Run 'pcs sync --scope profile' to refresh it", strings.Join(drift, ", ")))
+				default:
+					addCheck("profile", "shared-mcp-sync", "ok", "shared-mcp.json matches the main profile mcpServers")
+				}
 			} else {
 				addCheck("profile", "shared-mcp.json", "warn", "shared-mcp.json missing. Run 'pcs sync --scope profile' to generate it")
 			}
 
-			// Profile check 3: authentication check (file existence only, never read credentials)
+			// Profile check 3: plugins requested with --with-plugins are enabled in the profile.
+			if status.State != nil && status.State.WithPlugins {
+				enabled, err := mcp.PluginEnabled(status.SettingsJSONPath, installer.EngramPlugin)
+				name := "plugin:" + installer.EngramPlugin
+				switch {
+				case err != nil:
+					addCheck("profile", name, "warn", fmt.Sprintf("cannot read %s: %v", status.SettingsJSONPath, err))
+				case enabled:
+					addCheck("profile", name, "ok", "enabled in profile settings.json")
+				default:
+					addCheck("profile", name, "warn", fmt.Sprintf("not enabled in %s. Run 'pcs sync --scope profile --with-plugins', or 'claude plugin marketplace add %s' and then 'claude plugin install %s' with CLAUDE_CONFIG_DIR set to %s",
+						status.SettingsJSONPath, installer.EngramMarketplaceSource, installer.EngramPlugin, targetDir))
+				}
+			}
+
+			// Profile check 4: authentication check (file existence only, never read credentials)
 			credsPath := filepath.Join(targetDir, ".credentials.json")
-			if _, err := os.Stat(credsPath); err == nil {
+			switch _, err := os.Stat(credsPath); {
+			case err == nil:
 				addCheck("profile", "authentication", "ok", "profile authenticated (.credentials.json present)")
-			} else {
+			case goos == "darwin":
+				addCheck("profile", "authentication", "unknown", "cannot verify: on macOS Claude Code stores credentials in the Keychain, not .credentials.json. If 'claude-pcs' asks you to log in, execute '/login' once")
+			default:
 				addCheck("profile", "authentication", "warn", "profile not authenticated yet. Run 'claude-pcs' and execute '/login' once")
 			}
 		}
