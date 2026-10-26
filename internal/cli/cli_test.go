@@ -88,6 +88,8 @@ func TestCLISubcommands(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("PCS_INSTALL_SCOPE", "")
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
 			var stdout, stderr bytes.Buffer
 			code := Run(tt.args, Env{
 				Stdout:  &stdout,
@@ -118,4 +120,86 @@ func TestCLISubcommands(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCLIDefaultGlobalScopeAndEnvOverrides(t *testing.T) {
+	t.Run("default install without flags uses global scope (<HomeDir>/.claude)", func(t *testing.T) {
+		fakeHome := t.TempDir()
+		t.Setenv("PCS_INSTALL_SCOPE", "")
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{"install", "--json"}, Env{
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+			HomeDir: fakeHome,
+			WorkDir: fakeHome,
+		})
+		if code != 0 {
+			t.Fatalf("install exit code = %d, stderr: %s", code, stderr.String())
+		}
+		var rep map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &rep); err != nil {
+			t.Fatal(err)
+		}
+		if rep["scope"] != "global" {
+			t.Errorf("expected default scope=global, got %v", rep["scope"])
+		}
+		wantTarget := filepath.Join(fakeHome, ".claude")
+		if rep["target_dir"] != wantTarget {
+			t.Errorf("target_dir = %v, want %s", rep["target_dir"], wantTarget)
+		}
+	})
+
+	t.Run("default global install respects CLAUDE_CONFIG_DIR when set", func(t *testing.T) {
+		fakeHome := t.TempDir()
+		customConfig := filepath.Join(fakeHome, "isolated-claude")
+		t.Setenv("PCS_INSTALL_SCOPE", "")
+		t.Setenv("CLAUDE_CONFIG_DIR", customConfig)
+
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{"install", "--json"}, Env{
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+			HomeDir: fakeHome,
+			WorkDir: fakeHome,
+		})
+		if code != 0 {
+			t.Fatalf("install exit code = %d, stderr: %s", code, stderr.String())
+		}
+		var rep map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &rep); err != nil {
+			t.Fatal(err)
+		}
+		if rep["scope"] != "global" {
+			t.Errorf("expected scope=global, got %v", rep["scope"])
+		}
+		if rep["target_dir"] != customConfig {
+			t.Errorf("target_dir = %v, want %s", rep["target_dir"], customConfig)
+		}
+	})
+
+	t.Run("PCS_INSTALL_SCOPE overrides default scope when --scope is omitted", func(t *testing.T) {
+		fakeHome := t.TempDir()
+		t.Setenv("PCS_INSTALL_SCOPE", "profile")
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{"install", "--dry-run", "--json"}, Env{
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+			HomeDir: fakeHome,
+			WorkDir: fakeHome,
+		})
+		if code != 0 {
+			t.Fatalf("install exit code = %d, stderr: %s", code, stderr.String())
+		}
+		var rep map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &rep); err != nil {
+			t.Fatal(err)
+		}
+		if rep["scope"] != "profile" {
+			t.Errorf("expected scope=profile from PCS_INSTALL_SCOPE, got %v", rep["scope"])
+		}
+	})
 }

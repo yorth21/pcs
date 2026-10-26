@@ -30,14 +30,15 @@ const (
 
 // Options configures an Install, Sync, Uninstall, or Status operation.
 type Options struct {
-	Scope      string
-	TargetDir  string
-	HomeDir    string
-	Adapter    string
-	Persona    string
-	WithMCP    bool
-	DryRun     bool
-	RemoveMCP  bool
+	Scope           string
+	TargetDir       string
+	HomeDir         string
+	ClaudeConfigDir string
+	Adapter         string
+	Persona         string
+	WithMCP         bool
+	DryRun          bool
+	RemoveMCP       bool
 }
 
 // State persists the installed pcs configuration in <target-dir>/.pcs-state.json.
@@ -109,10 +110,13 @@ type resolvedLayout struct {
 func resolveLayout(opts Options) (*resolvedLayout, error) {
 	scope := strings.ToLower(strings.TrimSpace(opts.Scope))
 	if scope == "" {
-		scope = ScopeProfile
+		scope = strings.ToLower(strings.TrimSpace(os.Getenv("PCS_INSTALL_SCOPE")))
+	}
+	if scope == "" {
+		scope = ScopeGlobal
 	}
 	if scope != ScopeProfile && scope != ScopeGlobal && scope != ScopeWorkspace {
-		return nil, fmt.Errorf("invalid scope %q (supported: profile, global, workspace)", opts.Scope)
+		return nil, fmt.Errorf("invalid scope %q (supported: global, workspace, profile)", opts.Scope)
 	}
 
 	homeDir := strings.TrimSpace(opts.HomeDir)
@@ -123,14 +127,29 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 			return nil, fmt.Errorf("resolve home directory: %w", err)
 		}
 	}
+	absHome, err := filepath.Abs(homeDir)
+	if err != nil {
+		absHome = homeDir
+	}
+
+	claudeConfigDir := strings.TrimSpace(opts.ClaudeConfigDir)
+	if claudeConfigDir == "" {
+		claudeConfigDir = strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	}
 
 	targetDir := strings.TrimSpace(opts.TargetDir)
+	usedCustomClaudeConfigDir := false
 	if targetDir == "" {
 		switch scope {
 		case ScopeProfile:
-			targetDir = filepath.Join(homeDir, ".claude-pcs")
+			targetDir = filepath.Join(absHome, ".claude-pcs")
 		case ScopeGlobal:
-			targetDir = filepath.Join(homeDir, ".claude")
+			if claudeConfigDir != "" {
+				targetDir = claudeConfigDir
+				usedCustomClaudeConfigDir = true
+			} else {
+				targetDir = filepath.Join(absHome, ".claude")
+			}
 		case ScopeWorkspace:
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -160,8 +179,13 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 		layout.launcherPath = filepath.Join(absTarget, "bin", "claude-pcs")
 	case ScopeGlobal:
 		layout.claudeMDPath = filepath.Join(absTarget, "CLAUDE.md")
-		// In global mode, .claude.json lives in the parent of .claude (e.g. ~/.claude.json).
-		layout.claudeJSONPath = filepath.Join(filepath.Dir(absTarget), ".claude.json")
+		defaultGlobalDir := filepath.Join(absHome, ".claude")
+		if usedCustomClaudeConfigDir && filepath.Clean(absTarget) != filepath.Clean(defaultGlobalDir) {
+			layout.claudeJSONPath = filepath.Join(absTarget, ".claude.json")
+		} else {
+			// Default global layout: ~/.claude with ~/.claude.json in the parent directory.
+			layout.claudeJSONPath = filepath.Join(filepath.Dir(absTarget), ".claude.json")
+		}
 	case ScopeWorkspace:
 		// If the user passed a repo root or a .claude directory, normalize so
 		// targetDir is <workspace>/.claude and CLAUDE.md is at <workspace>/CLAUDE.md.

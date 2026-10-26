@@ -6,33 +6,35 @@
 
 ## Quick Path — Install & Launch (`pcs` CLI)
 
-Build and install the zero-dependency Go binary, deploy an isolated Product Composition profile (`~/.claude-pcs`) with `engram`, `context7`, and `codegraph` MCP servers pre-wired, and verify ecosystem health:
+Build the zero-dependency Go binary and install `pcs` using the same scope model as `gentle-ai` (`--scope global` by default, respecting `$CLAUDE_CONFIG_DIR` and `$PCS_INSTALL_SCOPE`, or `--scope workspace` for repository-level installation):
 
 ```bash
 # 1. Build the standalone Go CLI
 make build
 
-# 2. Install into an isolated profile (~/.claude-pcs) with MCP infrastructure
-./bin/pcs install --scope profile --adapter react-shadcn --persona gentleman --with-mcp=true
+# 2. Install into the global Claude config (~/.claude, or $CLAUDE_CONFIG_DIR if set)
+./bin/pcs install --adapter react-shadcn --persona gentleman --with-mcp=true
+
+# Or install into a specific frontend repository (--scope workspace)
+./bin/pcs install --scope workspace --target-dir /path/to/frontend-repo/.claude
+
+# Or target a dedicated profile directory via CLAUDE_CONFIG_DIR (or --scope profile)
+CLAUDE_CONFIG_DIR="$HOME/.claude-pcs" ./bin/pcs install
 
 # 3. Verify binaries, embedded brain, markers, native subagents, and skills
 ./bin/pcs doctor
-
-# 4. Launch your isolated Product Composition session
-~/.claude-pcs/bin/claude-pcs
-# or: CLAUDE_CONFIG_DIR="$HOME/.claude-pcs" claude
 ```
 
 ### CLI Command Reference
 
 | Command | Purpose |
 |---------|---------|
-| `pcs install [--scope profile\|global\|workspace] [--target-dir <dir>] [--adapter react-shadcn] [--persona gentleman\|neutral] [--with-mcp=true\|false] [--dry-run] [--json]` | Deploy `pcs` orchestrator markers, 5 native subagents, `pcs-core` + Stack Adapter skills, and MCP servers (`engram`, `context7`, `codegraph`) |
-| `pcs sync [--scope profile\|global\|workspace] [--target-dir <dir>] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and markers using `.pcs-state.json` |
-| `pcs status [--scope profile\|global\|workspace] [--target-dir <dir>] [--json]` | Inspect installed `CLAUDE.md` markers, native subagents, skills, and MCP configuration |
+| `pcs install [--scope global\|workspace\|profile] [--target-dir <dir>] [--adapter react-shadcn] [--persona gentleman\|neutral] [--with-mcp=true\|false] [--dry-run] [--json]` | Deploy `pcs` orchestrator markers, 5 native subagents, `pcs-core` + Stack Adapter skills, and MCP servers (`engram`, `context7`, `codegraph`); defaults to `global` (`~/.claude` or `$CLAUDE_CONFIG_DIR`) and respects `PCS_INSTALL_SCOPE` |
+| `pcs sync [--scope global\|workspace\|profile] [--target-dir <dir>] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and markers using `.pcs-state.json` |
+| `pcs status [--scope global\|workspace\|profile] [--target-dir <dir>] [--json]` | Inspect installed `CLAUDE.md` markers, native subagents, skills, and MCP configuration |
 | `pcs doctor [--target-dir <dir>] [--json]` | Run diagnostic checks on `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation |
 | `pcs skill-registry refresh [--cwd <dir>] [--skills-dir <dir>] [--json]` | Scan `SKILL.md` frontmatter and write deterministic `.atl/skill-registry.md` with SHA-256 cache-hit header |
-| `pcs uninstall [--scope profile\|global\|workspace] [--target-dir <dir>] [--dry-run] [--json]` | Cleanly remove `pcs`-owned markers, `pcs-*` native subagents, and `pcs-*` skills without touching `gentle-ai` or user files |
+| `pcs uninstall [--scope global\|workspace\|profile] [--target-dir <dir>] [--dry-run] [--json]` | Cleanly remove `pcs`-owned markers, `pcs-*` native subagents, and `pcs-*` skills without touching `gentle-ai` or user files |
 | `pcs version [--json]` | Print `pcs` CLI version |
 
 ---

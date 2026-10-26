@@ -180,3 +180,81 @@ Engram Protocol
 		t.Errorf("expected pre-existing skill %s to be preserved: %v", customSkill, err)
 	}
 }
+
+func TestDefaultGlobalScopeAndEnvironmentFallbacks(t *testing.T) {
+	tests := []struct {
+		name               string
+		envInstallScope    string
+		envClaudeConfigDir string
+		wantScope          string
+		wantTargetSuffix   string
+		wantClaudeJSONIn   string // "parent" or "target"
+	}{
+		{
+			name:             "defaults to global scope and <HomeDir>/.claude when no flags or env vars are set",
+			wantScope:        ScopeGlobal,
+			wantTargetSuffix: ".claude",
+			wantClaudeJSONIn: "parent",
+		},
+		{
+			name:               "uses CLAUDE_CONFIG_DIR when scope is global and target-dir is empty",
+			envClaudeConfigDir: "custom-claude-profile",
+			wantScope:          ScopeGlobal,
+			wantTargetSuffix:   "custom-claude-profile",
+			wantClaudeJSONIn:   "target",
+		},
+		{
+			name:             "respects PCS_INSTALL_SCOPE when Scope option is empty",
+			envInstallScope:  ScopeProfile,
+			wantScope:        ScopeProfile,
+			wantTargetSuffix: ".claude-pcs",
+			wantClaudeJSONIn: "target",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeHome := t.TempDir()
+			t.Setenv("PCS_INSTALL_SCOPE", tt.envInstallScope)
+
+			var customCfg string
+			if tt.envClaudeConfigDir != "" {
+				customCfg = filepath.Join(fakeHome, tt.envClaudeConfigDir)
+			}
+			t.Setenv("CLAUDE_CONFIG_DIR", customCfg)
+
+			opts := Options{
+				HomeDir: fakeHome,
+				WithMCP: true,
+			}
+			rep, err := Install(opts)
+			if err != nil {
+				t.Fatalf("Install() error: %v", err)
+			}
+			if rep.Scope != tt.wantScope {
+				t.Errorf("rep.Scope = %q, want %q", rep.Scope, tt.wantScope)
+			}
+			if !strings.HasSuffix(rep.TargetDir, tt.wantTargetSuffix) {
+				t.Errorf("rep.TargetDir = %q, want suffix %q", rep.TargetDir, tt.wantTargetSuffix)
+			}
+
+			status, err := Status(opts)
+			if err != nil {
+				t.Fatalf("Status() error: %v", err)
+			}
+			if !status.Installed {
+				t.Errorf("expected Status().Installed = true")
+			}
+
+			var expectedClaudeJSON string
+			if tt.wantClaudeJSONIn == "parent" {
+				expectedClaudeJSON = filepath.Join(fakeHome, ".claude.json")
+			} else {
+				expectedClaudeJSON = filepath.Join(rep.TargetDir, ".claude.json")
+			}
+			if status.ClaudeJSONPath != expectedClaudeJSON {
+				t.Errorf("status.ClaudeJSONPath = %q, want %q", status.ClaudeJSONPath, expectedClaudeJSON)
+			}
+		})
+	}
+}

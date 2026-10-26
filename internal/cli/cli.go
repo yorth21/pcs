@@ -16,10 +16,11 @@ import (
 
 // Env provides injectable I/O and environment boundaries for CLI execution.
 type Env struct {
-	Stdout  io.Writer
-	Stderr  io.Writer
-	HomeDir string
-	WorkDir string
+	Stdout          io.Writer
+	Stderr          io.Writer
+	HomeDir         string
+	WorkDir         string
+	ClaudeConfigDir string
 }
 
 // Run executes the pcs CLI command router and returns an exit code (0 on success).
@@ -80,10 +81,17 @@ func runVersion(args []string, env Env) int {
 	return 0
 }
 
+func defaultScopeFromEnv() string {
+	if s := strings.TrimSpace(os.Getenv("PCS_INSTALL_SCOPE")); s != "" {
+		return s
+	}
+	return installer.ScopeGlobal
+}
+
 func runInstall(args []string, env Env) int {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
-	scope := fs.String("scope", installer.ScopeProfile, "Installation scope: profile, global, or workspace")
+	scope := fs.String("scope", defaultScopeFromEnv(), "Installation scope: global, workspace, or profile (env: PCS_INSTALL_SCOPE)")
 	profileAlias := fs.Bool("profile", false, "Shorthand for --scope profile")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
 	adapter := fs.String("adapter", installer.DefaultAdapter, "Frontend stack adapter (e.g. react-shadcn)")
@@ -101,13 +109,14 @@ func runInstall(args []string, env Env) int {
 	}
 
 	rep, err := installer.Install(installer.Options{
-		Scope:     chosenScope,
-		TargetDir: *targetDir,
-		HomeDir:   env.HomeDir,
-		Adapter:   *adapter,
-		Persona:   *persona,
-		WithMCP:   *withMCP,
-		DryRun:    *dryRun,
+		Scope:           chosenScope,
+		TargetDir:       *targetDir,
+		HomeDir:         env.HomeDir,
+		ClaudeConfigDir: env.ClaudeConfigDir,
+		Adapter:         *adapter,
+		Persona:         *persona,
+		WithMCP:         *withMCP,
+		DryRun:          *dryRun,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "pcs install failed: %v\n", err)
@@ -123,7 +132,7 @@ func runInstall(args []string, env Env) int {
 func runSync(args []string, env Env) int {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
-	scope := fs.String("scope", installer.ScopeProfile, "Target scope: profile, global, or workspace")
+	scope := fs.String("scope", defaultScopeFromEnv(), "Target scope: global, workspace, or profile (env: PCS_INSTALL_SCOPE)")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
 	dryRun := fs.Bool("dry-run", false, "Preview planned sync actions without writing files")
 	asJSON := fs.Bool("json", false, "Output sync report as JSON")
@@ -133,10 +142,11 @@ func runSync(args []string, env Env) int {
 	}
 
 	rep, err := installer.Sync(installer.Options{
-		Scope:     *scope,
-		TargetDir: *targetDir,
-		HomeDir:   env.HomeDir,
-		DryRun:    *dryRun,
+		Scope:           *scope,
+		TargetDir:       *targetDir,
+		HomeDir:         env.HomeDir,
+		ClaudeConfigDir: env.ClaudeConfigDir,
+		DryRun:          *dryRun,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "pcs sync failed: %v\n", err)
@@ -152,7 +162,7 @@ func runSync(args []string, env Env) int {
 func runUninstall(args []string, env Env) int {
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
-	scope := fs.String("scope", installer.ScopeProfile, "Target scope: profile, global, or workspace")
+	scope := fs.String("scope", defaultScopeFromEnv(), "Target scope: global, workspace, or profile (env: PCS_INSTALL_SCOPE)")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
 	removeMCP := fs.Bool("remove-mcp", false, "Also remove engram, context7, and codegraph MCP entries in global/workspace scopes")
 	dryRun := fs.Bool("dry-run", false, "Preview planned uninstall actions without removing files")
@@ -163,11 +173,12 @@ func runUninstall(args []string, env Env) int {
 	}
 
 	rep, err := installer.Uninstall(installer.Options{
-		Scope:     *scope,
-		TargetDir: *targetDir,
-		HomeDir:   env.HomeDir,
-		RemoveMCP: *removeMCP,
-		DryRun:    *dryRun,
+		Scope:           *scope,
+		TargetDir:       *targetDir,
+		HomeDir:         env.HomeDir,
+		ClaudeConfigDir: env.ClaudeConfigDir,
+		RemoveMCP:       *removeMCP,
+		DryRun:          *dryRun,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "pcs uninstall failed: %v\n", err)
@@ -183,7 +194,7 @@ func runUninstall(args []string, env Env) int {
 func runStatus(args []string, env Env) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
-	scope := fs.String("scope", installer.ScopeProfile, "Target scope: profile, global, or workspace")
+	scope := fs.String("scope", defaultScopeFromEnv(), "Target scope: global, workspace, or profile (env: PCS_INSTALL_SCOPE)")
 	targetDir := fs.String("target-dir", "", "Custom target directory")
 	asJSON := fs.Bool("json", false, "Output status report as JSON")
 
@@ -192,9 +203,10 @@ func runStatus(args []string, env Env) int {
 	}
 
 	rep, err := installer.Status(installer.Options{
-		Scope:     *scope,
-		TargetDir: *targetDir,
-		HomeDir:   env.HomeDir,
+		Scope:           *scope,
+		TargetDir:       *targetDir,
+		HomeDir:         env.HomeDir,
+		ClaudeConfigDir: env.ClaudeConfigDir,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "pcs status failed: %v\n", err)
@@ -357,7 +369,7 @@ Commands:
   help                     Show this help message
 
 Key Flags (install / sync / uninstall / status):
-  --scope profile|global|workspace   Target deployment mode (default: profile -> ~/.claude-pcs)
+  --scope global|workspace|profile   Target deployment mode (default: global -> ~/.claude or $CLAUDE_CONFIG_DIR; env: PCS_INSTALL_SCOPE)
   --target-dir <dir>                 Override target configuration directory
   --adapter <name>                   Frontend stack adapter (default: react-shadcn)
   --persona gentleman|neutral        Coordinator persona variant (default: gentleman)

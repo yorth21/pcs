@@ -57,7 +57,7 @@ This file is the authoritative registry of orchestrator blocks, native subagents
 | `internal/assets` | Typed accessors for embedded orchestrator blocks, native subagents, skills, and base `gentle-ai` blocks (`codegraph-guidance`, `persona`, `engram-protocol`) | `internal/assets/assets.go` |
 | `internal/marker` | Idempotent HTML-comment section manager (`UpsertBlock`, `RemoveBlock`, `HasBlock`, `ExtractBlock`) for `CLAUDE.md` | `internal/marker/marker.go` |
 | `internal/mcp` | Atomic JSON merger/unmerger with `.bak` backups for `engram`, `context7`, and `codegraph` MCP servers in `.claude.json` and permissions/hooks in `settings.json` | `internal/mcp/mcp.go` |
-| `internal/installer` | Multi-scope (`profile`, `global`, `workspace`) installer, syncer, uninstaller, status inspector, `.pcs-state.json` tracker, and `claude-pcs` profile launcher generator | `internal/installer/installer.go` |
+| `internal/installer` | Multi-scope (`global` default respecting `$CLAUDE_CONFIG_DIR` and `$PCS_INSTALL_SCOPE`, `workspace`, and `profile`) installer, syncer, uninstaller, status inspector, and `.pcs-state.json` tracker | `internal/installer/installer.go` |
 | `internal/registry` | Deterministic `.atl/skill-registry.md` table generator with YAML frontmatter parser and SHA-256 content hash fast path | `internal/registry/registry.go` |
 | `internal/doctor` | Ecosystem health verifier for `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation state | `internal/doctor/doctor.go` |
 | `internal/cli` | CLI command router (`install`, `sync`, `uninstall`, `status`, `doctor`, `skill-registry refresh`, `version`, `help`) | `internal/cli/cli.go` |
