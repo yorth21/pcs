@@ -99,9 +99,16 @@ type State struct {
 	CreatedSettingsJSON bool     `json:"created_settings_json,omitempty"`
 	LauncherDir         string   `json:"launcher_dir,omitempty"`
 	LauncherArgs        string   `json:"launcher_args,omitempty"`
-	AddedStatusLine     bool     `json:"added_status_line,omitempty"`
-	SharedMCPFile       string   `json:"shared_mcp_file,omitempty"`
-	ManagedFiles        []string `json:"managed_files"`
+	// NoStatusLine and WithPlugins persist the opt-out/opt-in install flags so a
+	// later sync honors them; a legacy state without them keeps the defaults.
+	NoStatusLine    bool `json:"no_statusline,omitempty"`
+	WithPlugins     bool `json:"with_plugins,omitempty"`
+	AddedStatusLine bool `json:"added_status_line,omitempty"`
+	// StatusLineSHA256 is the digest of the statusLine value pcs copied, so
+	// uninstall removes it only while it is unchanged.
+	StatusLineSHA256 string   `json:"status_line_sha256,omitempty"`
+	SharedMCPFile    string   `json:"shared_mcp_file,omitempty"`
+	ManagedFiles     []string `json:"managed_files"`
 }
 
 // hasMCPDeltaRecord reports whether the state records exactly which MCP servers,
@@ -502,6 +509,12 @@ func Sync(opts Options) (*Report, error) {
 	if !opts.FlagOverrides["launcher-args"] && opts.LauncherArgs == "" {
 		opts.LauncherArgs = saved.LauncherArgs
 	}
+	if !opts.FlagOverrides["no-statusline"] && !opts.NoStatusLine {
+		opts.NoStatusLine = saved.NoStatusLine
+	}
+	if !opts.FlagOverrides["with-plugins"] && !opts.WithPlugins {
+		opts.WithPlugins = saved.WithPlugins
+	}
 	normalizeOptions(&opts)
 	return applyInstall(opts, "sync")
 }
@@ -770,9 +783,11 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	// 5. In profile scope, create shared-mcp.json, statusLine copy, and cross-platform launchers.
 	sharedMCPFile := ""
 	addedStatusLine := false
+	statusLineSHA256 := ""
 	if prevState != nil {
 		sharedMCPFile = prevState.SharedMCPFile
 		addedStatusLine = prevState.AddedStatusLine
+		statusLineSHA256 = prevState.StatusLineSHA256
 	}
 
 	if layout.scope == ScopeProfile && layout.sharedMCPPath != "" {
@@ -791,7 +806,12 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 					return nil, fmt.Errorf("copy statusLine: %w", err)
 				}
 				if copied {
+					digest, _, err := mcp.StatusLineSHA256(layout.settingsJSONPath)
+					if err != nil {
+						return nil, fmt.Errorf("record statusLine digest: %w", err)
+					}
 					addedStatusLine = true
+					statusLineSHA256 = digest
 					recordFile("copy-statusline", layout.settingsJSONPath, "copied statusLine from main profile")
 				}
 			} else {
@@ -891,7 +911,10 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		CreatedSettingsJSON: createdSettingsJSON,
 		LauncherDir:         layout.userBinDir,
 		LauncherArgs:        opts.LauncherArgs,
+		NoStatusLine:        opts.NoStatusLine,
+		WithPlugins:         opts.WithPlugins,
 		AddedStatusLine:     addedStatusLine,
+		StatusLineSHA256:    statusLineSHA256,
 		SharedMCPFile:       sharedMCPFile,
 		ManagedFiles:        managedFiles,
 	}
@@ -957,7 +980,6 @@ func Uninstall(opts Options) (*Report, error) {
 						return nil, fmt.Errorf("update %s: %w", layout.claudeMDPath, err)
 					}
 				}
-				_ = os.Remove(layout.claudeMDPath + mcp.PrePCSBackupSuffix)
 			}
 			report.Actions = append(report.Actions, Action{
 				Operation: "remove-markers",
@@ -1084,13 +1106,7 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 	}
 	if savedState != nil && savedState.AddedStatusLine {
-		if !opts.DryRun {
-			_ = mcp.RemoveStatusLine(layout.settingsJSONPath)
-		}
-		report.Actions = append(report.Actions, Action{
-			Operation: "remove-statusline",
-			Path:      layout.settingsJSONPath,
-		})
+		uninstallStatusLine(layout, savedState, opts.DryRun, report)
 	}
 
 	// Remove cross-platform profile launchers if present and clean up bin/ if empty.
@@ -1138,7 +1154,54 @@ func Uninstall(opts Options) (*Report, error) {
 		})
 	}
 
+	// 8. Keep every .pre-pcs.bak backup and list it so the user can restore or delete it.
+	for _, p := range []string{layout.claudeMDPath, layout.claudeJSONPath, layout.settingsJSONPath} {
+		if p == "" {
+			continue
+		}
+		bak := p + mcp.PrePCSBackupSuffix
+		if _, err := os.Stat(bak); err == nil {
+			report.Actions = append(report.Actions, Action{
+				Operation: "keep-backup",
+				Path:      bak,
+				Detail:    "pre-pcs backup kept; restore or delete it manually",
+			})
+		}
+	}
+
 	return report, nil
+}
+
+// uninstallStatusLine removes the statusLine pcs copied into the profile only
+// while it still matches what pcs wrote: the recorded digest, or for a legacy
+// state without one, the main profile's current statusLine. A changed value is
+// kept and reported.
+func uninstallStatusLine(layout *resolvedLayout, saved *State, dryRun bool, report *Report) {
+	current, present, err := mcp.StatusLineSHA256(layout.settingsJSONPath)
+	if err != nil || !present {
+		return
+	}
+	want := saved.StatusLineSHA256
+	if want == "" && layout.mainSettingsPath != "" {
+		want, _, _ = mcp.StatusLineSHA256(layout.mainSettingsPath)
+	}
+	if want == "" || current != want {
+		report.Actions = append(report.Actions, Action{
+			Operation: "keep-statusline",
+			Path:      layout.settingsJSONPath,
+			Detail:    "statusLine changed since pcs copied it",
+		})
+		report.Warnings = append(report.Warnings,
+			fmt.Sprintf("kept statusLine in %s because it changed since pcs copied it", layout.settingsJSONPath))
+		return
+	}
+	if !dryRun {
+		_ = mcp.RemoveStatusLine(layout.settingsJSONPath)
+	}
+	report.Actions = append(report.Actions, Action{
+		Operation: "remove-statusline",
+		Path:      layout.settingsJSONPath,
+	})
 }
 
 // Status inspects the target directory and reports installed markers, agents,

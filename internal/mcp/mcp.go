@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -268,8 +270,8 @@ func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelt
 				}
 			}
 			if delta.CreatedClaudeJSON && len(root) == 0 {
+				// Any .pre-pcs.bak is kept: uninstall never deletes backups.
 				_ = os.Remove(claudeJSONPath)
-				_ = os.Remove(claudeJSONPath + PrePCSBackupSuffix)
 			} else if changed {
 				if err := writeJSONAtomicWithPerm(claudeJSONPath, root, perm); err != nil {
 					return err
@@ -319,8 +321,8 @@ func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelt
 				}
 			}
 			if delta.CreatedSettingsJSON && len(root) == 0 {
+				// Any .pre-pcs.bak is kept: uninstall never deletes backups.
 				_ = os.Remove(settingsJSONPath)
-				_ = os.Remove(settingsJSONPath + PrePCSBackupSuffix)
 			} else if changed {
 				if err := writeJSONAtomicWithPerm(settingsJSONPath, root, perm); err != nil {
 					return err
@@ -622,4 +624,27 @@ func RemoveStatusLine(targetSettingsJSONPath string) error {
 	}
 	delete(targetRoot, "statusLine")
 	return writeJSONAtomicWithPerm(targetSettingsJSONPath, targetRoot, perm)
+}
+
+// StatusLineSHA256 returns the SHA-256 hex digest of the JSON encoding of the
+// statusLine value in settingsJSONPath and whether a statusLine is present.
+// encoding/json sorts map keys, so equal values always yield equal digests.
+func StatusLineSHA256(settingsJSONPath string) (string, bool, error) {
+	if _, err := os.Stat(settingsJSONPath); os.IsNotExist(err) {
+		return "", false, nil
+	}
+	root, _, _, _, err := readJSONObjectWithPerm(settingsJSONPath, 0o644)
+	if err != nil {
+		return "", false, err
+	}
+	value, ok := root["statusLine"]
+	if !ok {
+		return "", false, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", true, fmt.Errorf("encode statusLine in %s: %w", settingsJSONPath, err)
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), true, nil
 }
