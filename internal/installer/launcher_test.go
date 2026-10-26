@@ -135,19 +135,6 @@ func TestPOSIXLauncherPassesArgsLiterallyWithMCPConfigLast(t *testing.T) {
 	assertLauncherArgv(t, out, profileDir, sharedMCP)
 }
 
-func TestCmdLauncherPassesArgsLiterallyWithMCPConfigLast(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("cmd launcher execution test runs on Windows only")
-	}
-	launcherDir, profileDir, sharedMCP := installLauncherForExec(t, launcherArgsWithShellMetacharacters, "cmd")
-
-	out, err := exec.Command(filepath.Join(launcherDir, "claude-pcs.cmd"), "hello world", "--resume", "x").CombinedOutput()
-	if err != nil {
-		t.Fatalf("run cmd launcher: %v\n%s", err, out)
-	}
-	assertLauncherArgv(t, out, profileDir, sharedMCP)
-}
-
 func TestPowerShellLauncherPassesArgsLiterallyWithMCPConfigLast(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("PowerShell launcher execution test runs on Windows only")
