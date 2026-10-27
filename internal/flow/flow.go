@@ -35,6 +35,9 @@ const (
 	StatusDone       = "done"
 	StatusBlocked    = "blocked"
 	StatusUnverified = "unverified"
+	// StatusStale marks a verify phase whose working-tree fingerprint no
+	// longer matches: the source changed after the verifier ran.
+	StatusStale = "stale"
 )
 
 // Record sources.
@@ -93,6 +96,9 @@ type Phase struct {
 	EnvelopeStatus string   `json:"envelope_status,omitempty"`
 	Source         string   `json:"source,omitempty"`
 	Note           string   `json:"note,omitempty"`
+	// Fingerprint binds a done verify or audit phase to the working tree it
+	// checked (see Fingerprint); FingerprintUnavailable when git was unusable.
+	Fingerprint string `json:"fingerprint,omitempty"`
 	// Runs lists every recorded result for this phase in order, so duplicate
 	// or failed subagent runs stay visible after the phase is done.
 	Runs []Run `json:"runs,omitempty"`
@@ -106,6 +112,7 @@ type Run struct {
 	EnvelopeStatus string `json:"envelope_status,omitempty"`
 	Source         string `json:"source,omitempty"`
 	Note           string `json:"note,omitempty"`
+	Fingerprint    string `json:"fingerprint,omitempty"`
 	RecordedAt     string `json:"recorded_at"`
 }
 
@@ -365,6 +372,9 @@ func (f *Flow) Next() Transition {
 			}
 		case StatusUnverified:
 			instr = fmt.Sprintf("Phase %s is unverified (feature %s, subagent_type %q).", p.Name, f.Feature, agent)
+		case StatusStale:
+			instr = fmt.Sprintf("%s. Phase %s is stale: delegate to subagent %s%s again for feature %s with the Agent tool, subagent_type %q. Its Return Envelope status is recorded automatically when it stops.",
+				StaleVerifyMessage, p.Name, agent, alt, f.Feature, agent)
 		}
 		if unverified, ok := p.lastUnverifiedAgent(); ok || p.Status == StatusUnverified {
 			if unverified == "" {
@@ -614,6 +624,7 @@ func (s Store) RecordRun(phase string, run Run) (*Flow, error) {
 	p.EnvelopeStatus = run.EnvelopeStatus
 	p.Source = run.Source
 	p.Note = run.Note
+	p.Fingerprint = run.Fingerprint
 	p.RecordedAt = run.RecordedAt
 	return f, s.Save(f)
 }
@@ -633,6 +644,15 @@ func (s Store) Close(abandon bool, reason string) (*Flow, error) {
 		return nil, ErrNoActiveFlow
 	}
 	reason = strings.TrimSpace(reason)
+	if !abandon {
+		stale, err := s.VerifyBindingStale(f)
+		if err != nil {
+			return nil, err
+		}
+		if stale {
+			return nil, errors.New(StaleVerifyMessage + " (pcs flow next)")
+		}
+	}
 	if abandon {
 		if len([]rune(reason)) < MinAbandonReason {
 			return nil, fmt.Errorf("--abandon requires a --reason of at least %d characters stating the user cancellation", MinAbandonReason)

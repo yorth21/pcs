@@ -444,9 +444,15 @@ func subagentStop(store flow.Store, in Input) error {
 	}
 	phase := f.Phases[idx].Name
 	status, note := flow.StatusFromEnvelope(phase, envelope)
+	fingerprint := ""
+	if status == flow.StatusDone && flow.FingerprintsPhase(phase) {
+		// Bind the result to the working tree the subagent checked.
+		fingerprint = flow.Fingerprint(store.Root)
+	}
 	_, err = store.RecordRun(phase, flow.Run{
 		AgentID: in.AgentID, AgentType: in.AgentType, Status: status,
 		EnvelopeStatus: envelope, Source: flow.SourceHook, Note: note,
+		Fingerprint: fingerprint,
 	})
 	return err
 }
@@ -559,6 +565,12 @@ func stop(store flow.Store, in Input) (any, error) {
 		// A flow owned by another session never blocks this session, and a
 		// flow awaiting the user's answer lets the turn end.
 		return nil, err
+	}
+	if f.Complete() {
+		// Recompute the verify binding only once every phase is done.
+		if _, err := store.VerifyBindingStale(f); err != nil {
+			return nil, err
+		}
 	}
 	if pending := f.Pending(); len(pending) > 0 {
 		return stopDecision{Decision: "block", Reason: fmt.Sprintf(
