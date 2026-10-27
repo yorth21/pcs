@@ -67,11 +67,19 @@ Out of scope: more flow machinery beyond the fix loop and in-flight tracking, ot
 - T3 done (delegated) — commit `b69b947`: `05-saas-pattern-mapping.md` covers all 63 catalog IDs; 8 template blueprints under `assets/templates/`.
 - T4 done (delegated) — commit `6504512`; follow-up `1ab6dd5` adds `--caps network` to the pcs Playwright MCP because `browser_run_code` does not exist in 0.0.83 and `browser_route`/`browser_network_state_set` need the network capability.
 - T6 started: baselines committed (B1 `d2961e3e`, B2 `fd53ed80`, B3 `a6b95e07`); pcs binary rebuilt at `b69b947`, profile synced, doctor HEALTHY; pcs run B1 launched headless on port 5181.
+- T6 pcs runs (headless, no human input after the prompt):
+  - B1 `44368ac7`: full flow closed; verify round 1 found `/flujo-credito` emptied by the router plugin, fix round 1 restored it; verify round 2 success. The session hit the account usage limit during compose and was resumed; the in-flight entry stayed until its 30 min TTL expired.
+  - B2 `554df4e4`: full flow closed; verify round 1 found 3 severe password-dialog defects and a client/server password-rule mismatch; fix round 1 resolved them.
+  - B3: stopped by the usage limit after compose (explore, strategy, compose done; apply, verify pending; flow open in `bench-b3-pcs`).
+- Cost observation: one resumed pcs session for B1 cost about 9.6 USD; pcs runs cost several times a baseline run.
+- Observed defects, filed as GitHub issues: coordinator does not commit when the user asks; inventory screens table uses free-text templates instead of `tpl-*` IDs; in-flight entry stays after an interrupted session until the TTL.
 
 ## Verification evidence
 
 - T1: `go vet ./...` and `go test ./...` pass (all packages ok; parent spot check after the writer's run).
+- T2–T4: `go test ./...` passes after each commit; adapter mapping covers 63/63 catalog IDs; forbidden-name scan of `brain/skills/pcs-saas` empty.
+- T6: B1 and B2 pcs flows closed with verify `success` after one fix round each. Quality comparison (neutral capture and blind judge) not run yet.
 
 ## Next step
 
-T2 catalog (in progress), baseline runs B1–B3, then T3 and T4.
+Handed off as GitHub issues: finish B3 pcs, neutral capture and blind judge, fix the observed defects, measure and reduce cost, and the product-type to catalog hook.
