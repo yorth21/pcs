@@ -443,7 +443,7 @@ func stop(store flow.Store, in Input) (any, error) {
 	if pending := f.Pending(); len(pending) > 0 {
 		return stopDecision{Decision: "block", Reason: fmt.Sprintf(
 			"PCD flow %s (%s) is incomplete: pending %s. Next: %s. If the user explicitly cancelled, run: %s",
-			f.Feature, f.Kind, strings.Join(pending, ", "), f.Next().Instruction, flow.AbandonCommand)}, nil
+			f.Feature, f.Kind, strings.Join(pending, ", "), strings.TrimSuffix(f.Next().Instruction, "."), flow.AbandonCommand)}, nil
 	}
 	return stopDecision{Decision: "block", Reason: fmt.Sprintf(
 		"PCD flow %s (%s) is complete: run `%s` before ending the turn.", f.Feature, f.Kind, flow.CloseCommand)}, nil
