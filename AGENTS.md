@@ -18,6 +18,7 @@ This file is the authoritative registry of orchestrator blocks, native subagents
 | Skill Name | Scope | Trigger / Description | Exact Path |
 |------------|-------|-----------------------|------------|
 | `pcs-core` | Agnostic UX Methodology (Planes 1–5) | `Trigger: UX design, new feature, screen flow, wireframe, usability audit, empty states, PCD planes. Apply technology-agnostic 5-Plane UX rules.` | `brain/skills/pcs-core/SKILL.md` |
+| `pcs-saas` | Agnostic SaaS Pattern Catalog (templates, organisms, composition) | `Trigger: SaaS screen, page template, compose page, organism, dashboard, table page, settings, wizard, UI inventory. Select template and compose state-complete SaaS pages.` | `brain/skills/pcs-saas/SKILL.md` |
 | `pcs-adapter-react-shadcn` | Frontend Stack Adapter (React 19 + shadcn/ui) | `Trigger: React component, shadcn/ui, Tailwind v4, TanStack Table/Router/Query, React Hook Form, Zod, UI build. Compose vanilla shadcn/ui surfaces.` | `brain/skills/pcs-adapter-react-shadcn/SKILL.md` |
 
 ### Shared Skill Protocol
