@@ -120,6 +120,10 @@ type State struct {
 	// uninstall removes it only while it is unchanged.
 	StatusLineSHA256 string `json:"status_line_sha256,omitempty"`
 	SharedMCPFile    string `json:"shared_mcp_file,omitempty"`
+	// SharedMCPAddedServers lists the servers pcs added to shared-mcp.json on
+	// top of the main profile set (engram, playwright). Sync regenerates them
+	// and uninstall removes them with the file.
+	SharedMCPAddedServers []string `json:"shared_mcp_added_servers,omitempty"`
 	// FlowHooks records the effective --with-hooks/--no-hooks choice so sync
 	// keeps it; nil (a state written before flow hooks) means the scope default.
 	FlowHooks *bool `json:"flow_hooks,omitempty"`
@@ -958,10 +962,12 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 
 	// 5. In profile scope, create shared-mcp.json, statusLine copy, and cross-platform launchers.
 	sharedMCPFile := ""
+	var sharedMCPAdded []string
 	addedStatusLine := false
 	statusLineSHA256 := ""
 	if prevState != nil {
 		sharedMCPFile = prevState.SharedMCPFile
+		sharedMCPAdded = prevState.SharedMCPAddedServers
 		addedStatusLine = prevState.AddedStatusLine
 		statusLineSHA256 = prevState.StatusLineSHA256
 	}
@@ -971,11 +977,12 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		// no engram binary resolved; a successful --with-plugins provides Engram.
 		engramMissing := false
 		if !opts.DryRun {
-			missing, err := mcp.GenerateSharedMCPFile(layout.sharedMCPPath, layout.mainClaudeJSONPath)
+			res, err := mcp.GenerateSharedMCP(layout.sharedMCPPath, layout.mainClaudeJSONPath)
 			if err != nil {
 				return nil, fmt.Errorf("generate shared-mcp.json: %w", err)
 			}
-			engramMissing = missing
+			engramMissing = res.EngramMissing
+			sharedMCPAdded = res.AddedServers
 		}
 		sharedMCPFile = layout.sharedMCPPath
 		recordFile("write-shared-mcp", layout.sharedMCPPath, "shared MCP configuration (0600)")
@@ -1069,37 +1076,38 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 
 	// 7. Persist .pcs-state.json.
 	state := State{
-		SchemaVersion:       StateSchemaVersion,
-		Version:             Version,
-		InstalledAt:         time.Now().UTC().Format(time.RFC3339),
-		Scope:               layout.scope,
-		TargetDir:           layout.targetDir,
-		Adapter:             opts.Adapter,
-		Persona:             opts.Persona,
-		MCPGuidance:         mcpGuidance,
-		WriteMCPConfig:      opts.WriteMCPConfig,
-		WriteHook:           opts.WriteHook,
-		WithMCP:             opts.WithMCP,
-		EnabledMCPs:         enabledMCPs,
-		AddedMCPServers:     addedMCPServers,
-		AddedPermissions:    addedPermissions,
-		AddedPlugins:        addedPlugins,
-		AddedHook:           addedHook,
-		CreatedClaudeMD:     createdClaudeMD,
-		CreatedClaudeJSON:   createdClaudeJSON,
-		CreatedSettingsJSON: createdSettingsJSON,
-		CreatedSettingsKeys: createdSettingsKeys,
-		LauncherDir:         layout.userBinDir,
-		LauncherArgs:        opts.LauncherArgs,
-		NoStatusLine:        opts.NoStatusLine,
-		WithPlugins:         opts.WithPlugins,
-		AddedStatusLine:     addedStatusLine,
-		StatusLineSHA256:    statusLineSHA256,
-		SharedMCPFile:       sharedMCPFile,
-		FlowHooks:           BoolPtr(flowHooks),
-		AddedFlowHooks:      addedFlowHooks,
-		FlowHookBinary:      flowHookBinary,
-		ManagedFiles:        managedFiles,
+		SchemaVersion:         StateSchemaVersion,
+		Version:               Version,
+		InstalledAt:           time.Now().UTC().Format(time.RFC3339),
+		Scope:                 layout.scope,
+		TargetDir:             layout.targetDir,
+		Adapter:               opts.Adapter,
+		Persona:               opts.Persona,
+		MCPGuidance:           mcpGuidance,
+		WriteMCPConfig:        opts.WriteMCPConfig,
+		WriteHook:             opts.WriteHook,
+		WithMCP:               opts.WithMCP,
+		EnabledMCPs:           enabledMCPs,
+		AddedMCPServers:       addedMCPServers,
+		AddedPermissions:      addedPermissions,
+		AddedPlugins:          addedPlugins,
+		AddedHook:             addedHook,
+		CreatedClaudeMD:       createdClaudeMD,
+		CreatedClaudeJSON:     createdClaudeJSON,
+		CreatedSettingsJSON:   createdSettingsJSON,
+		CreatedSettingsKeys:   createdSettingsKeys,
+		LauncherDir:           layout.userBinDir,
+		LauncherArgs:          opts.LauncherArgs,
+		NoStatusLine:          opts.NoStatusLine,
+		WithPlugins:           opts.WithPlugins,
+		AddedStatusLine:       addedStatusLine,
+		StatusLineSHA256:      statusLineSHA256,
+		SharedMCPFile:         sharedMCPFile,
+		SharedMCPAddedServers: sharedMCPAdded,
+		FlowHooks:             BoolPtr(flowHooks),
+		AddedFlowHooks:        addedFlowHooks,
+		FlowHookBinary:        flowHookBinary,
+		ManagedFiles:          managedFiles,
 	}
 	if !opts.DryRun {
 		if err := writeJSONFile(statePath, state); err != nil {

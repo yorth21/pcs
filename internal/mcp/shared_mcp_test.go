@@ -46,11 +46,11 @@ func TestGenerateSharedMCPFileProvidesEngram(t *testing.T) {
 		// wantEngramCommand is checked when engram must be present.
 		wantEngramCommand string
 	}{
-		{name: "main without engram gains the resolved engram", mainJSON: `{"mcpServers": {` + mainServer + `}}`, engramPath: "/fake/bin/engram", wantServers: []string{"engram", "main-server"}, wantEngramCommand: "/fake/bin/engram"},
-		{name: "main engram is mirrored unchanged", mainJSON: `{"mcpServers": {` + mainServer + `, ` + customEngram + `}}`, engramPath: "/fake/bin/engram", wantServers: []string{"engram", "main-server"}, wantEngramCommand: "/custom/engram"},
-		{name: "unresolved engram is not written", mainJSON: `{"mcpServers": {` + mainServer + `}}`, wantServers: []string{"main-server"}, wantMissing: true},
-		{name: "defaults use the resolved engram", mainJSON: `{}`, engramPath: "/fake/bin/engram", wantServers: []string{"codegraph", "context7", "engram"}, wantEngramCommand: "/fake/bin/engram"},
-		{name: "defaults without engram binary omit engram", mainJSON: `{}`, wantServers: []string{"codegraph", "context7"}, wantMissing: true},
+		{name: "main without engram gains the resolved engram", mainJSON: `{"mcpServers": {` + mainServer + `}}`, engramPath: "/fake/bin/engram", wantServers: []string{"engram", "main-server", "playwright"}, wantEngramCommand: "/fake/bin/engram"},
+		{name: "main engram is mirrored unchanged", mainJSON: `{"mcpServers": {` + mainServer + `, ` + customEngram + `}}`, engramPath: "/fake/bin/engram", wantServers: []string{"engram", "main-server", "playwright"}, wantEngramCommand: "/custom/engram"},
+		{name: "unresolved engram is not written", mainJSON: `{"mcpServers": {` + mainServer + `}}`, wantServers: []string{"main-server", "playwright"}, wantMissing: true},
+		{name: "defaults use the resolved engram", mainJSON: `{}`, engramPath: "/fake/bin/engram", wantServers: []string{"codegraph", "context7", "engram", "playwright"}, wantEngramCommand: "/fake/bin/engram"},
+		{name: "defaults without engram binary omit engram", mainJSON: `{}`, wantServers: []string{"codegraph", "context7", "playwright"}, wantMissing: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

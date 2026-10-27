@@ -1,8 +1,10 @@
 package installer
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -572,6 +574,17 @@ func TestProfileScopeLauncherIsolationAndSharedMCP(t *testing.T) {
 	}
 	if !strings.Contains(string(sharedData), "main-server") {
 		t.Errorf("expected shared-mcp.json to contain main-server from main profile:\n%s", string(sharedData))
+	}
+	// The main profile has no playwright server, so pcs adds its own and records it.
+	if !strings.Contains(string(sharedData), mcp.PlaywrightMCPPackage) || !strings.Contains(string(sharedData), mcp.PlaywrightOutputDir) {
+		t.Errorf("expected shared-mcp.json to contain the pcs playwright server:\n%s", string(sharedData))
+	}
+	var profState State
+	if b, err := os.ReadFile(filepath.Join(profileDir, StateFileName)); err != nil || json.Unmarshal(b, &profState) != nil {
+		t.Fatalf("read profile state: %v", err)
+	}
+	if !slices.Contains(profState.SharedMCPAddedServers, mcp.ServerPlaywright) {
+		t.Errorf("SharedMCPAddedServers = %v, want playwright recorded", profState.SharedMCPAddedServers)
 	}
 
 	// 2. Verify main profile's .claude.json was NOT mutated

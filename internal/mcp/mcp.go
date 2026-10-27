@@ -18,6 +18,15 @@ const (
 	ServerEngram    = "engram"
 	ServerContext7  = "context7"
 	ServerCodeGraph = "codegraph"
+	// ServerPlaywright is the browser automation server pcs adds to the profile
+	// shared-mcp.json for the pcs-auditor visual pass.
+	ServerPlaywright = "playwright"
+
+	// PlaywrightMCPPackage pins the Playwright MCP server version pcs installs.
+	PlaywrightMCPPackage = "@playwright/mcp@0.0.83"
+	// PlaywrightOutputDir is the project-relative directory where the
+	// Playwright MCP server writes screenshots and traces.
+	PlaywrightOutputDir = ".pcs/playwright"
 
 	PrePCSBackupSuffix = ".pre-pcs.bak"
 )
@@ -622,18 +631,47 @@ func ReadMainProfileMCPServers(mainClaudeJSONPath string) (map[string]any, bool,
 	return nil, false, nil
 }
 
-// GenerateSharedMCPFile writes the shared MCP configuration to outPath with 0o600 permissions.
+// PlaywrightServerDefinition returns the pcs Playwright MCP server, which
+// writes its artifacts under PlaywrightOutputDir instead of the project root.
+func PlaywrightServerDefinition() map[string]any {
+	return map[string]any{
+		"command": "npx",
+		"args":    []any{"-y", PlaywrightMCPPackage, "--output-dir", PlaywrightOutputDir},
+	}
+}
+
+// SharedMCPResult records what GenerateSharedMCP added on top of the source
+// MCP servers.
+type SharedMCPResult struct {
+	// AddedServers lists the servers pcs added because the source set lacked
+	// them (engram, playwright), sorted.
+	AddedServers []string
+	// EngramMissing reports that no engram server was written because no
+	// engram binary resolved.
+	EngramMissing bool
+}
+
+// GenerateSharedMCPFile writes the shared MCP configuration (see
+// GenerateSharedMCP) and reports whether the engram server is missing.
+func GenerateSharedMCPFile(outPath, mainClaudeJSONPath string) (engramMissing bool, err error) {
+	res, err := GenerateSharedMCP(outPath, mainClaudeJSONPath)
+	return res.EngramMissing, err
+}
+
+// GenerateSharedMCP writes the shared MCP configuration to outPath with 0o600 permissions.
 // If mainClaudeJSONPath contains configured mcpServers, they are reused directly; otherwise,
 // default pcs components (engram, context7, codegraph) are generated. The main
 // file is only read. Every pcs agent requires Engram, so when the main profile
 // defines no engram server (for example because it uses the engram@engram
 // plugin), an engram server pointing at the resolved engram binary is added.
 // When no engram binary resolves, no engram entry is written and engramMissing
-// is true.
-func GenerateSharedMCPFile(outPath, mainClaudeJSONPath string) (engramMissing bool, err error) {
+// is true. A playwright server (PlaywrightServerDefinition) is added when the
+// source set has none.
+func GenerateSharedMCP(outPath, mainClaudeJSONPath string) (SharedMCPResult, error) {
+	var res SharedMCPResult
 	servers, found, err := ReadMainProfileMCPServers(mainClaudeJSONPath)
 	if err != nil {
-		return false, err
+		return res, err
 	}
 	if !found || len(servers) == 0 {
 		servers = make(map[string]any)
@@ -643,7 +681,7 @@ func GenerateSharedMCPFile(outPath, mainClaudeJSONPath string) (engramMissing bo
 			}
 			def, defErr := ServerDefinition(comp)
 			if defErr != nil {
-				return false, defErr
+				return res, defErr
 			}
 			servers[comp] = def
 		}
@@ -652,17 +690,23 @@ func GenerateSharedMCPFile(outPath, mainClaudeJSONPath string) (engramMissing bo
 		if _, ok := LookupEngramBinary(); ok {
 			def, defErr := ServerDefinition(ServerEngram)
 			if defErr != nil {
-				return false, defErr
+				return res, defErr
 			}
 			servers[ServerEngram] = def
+			res.AddedServers = append(res.AddedServers, ServerEngram)
 		} else {
-			engramMissing = true
+			res.EngramMissing = true
 		}
 	}
+	if _, hasPlaywright := servers[ServerPlaywright]; !hasPlaywright {
+		servers[ServerPlaywright] = PlaywrightServerDefinition()
+		res.AddedServers = append(res.AddedServers, ServerPlaywright)
+	}
+	slices.Sort(res.AddedServers)
 	payload := map[string]any{
 		"mcpServers": servers,
 	}
-	return engramMissing, writeJSONAtomicWithPerm(outPath, payload, 0o600)
+	return res, writeJSONAtomicWithPerm(outPath, payload, 0o600)
 }
 
 // CopyStatusLineIfMissing copies statusLine from mainSettingsJSONPath into
@@ -760,8 +804,8 @@ func PluginEnabled(settingsJSONPath, plugin string) (bool, error) {
 // profile's mcpServers and returns the sorted names of servers that are
 // missing, extra, or different. It returns nil when they match, or when the main
 // profile defines no servers (shared-mcp.json then holds the pcs defaults). An
-// engram server is not drift when the main profile defines none, because
-// GenerateSharedMCPFile adds it.
+// engram or playwright server is not drift when the main profile defines none,
+// because GenerateSharedMCP adds it.
 func SharedMCPDrift(sharedMCPPath, mainClaudeJSONPath string) ([]string, error) {
 	mainServers, found, err := ReadMainProfileMCPServers(mainClaudeJSONPath)
 	if err != nil || !found {
@@ -779,7 +823,7 @@ func SharedMCPDrift(sharedMCPPath, mainClaudeJSONPath string) ([]string, error) 
 		}
 	}
 	for name := range shared {
-		if _, ok := mainServers[name]; !ok && name != ServerEngram {
+		if _, ok := mainServers[name]; !ok && name != ServerEngram && name != ServerPlaywright {
 			drift = append(drift, name)
 		}
 	}

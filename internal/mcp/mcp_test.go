@@ -371,3 +371,64 @@ func TestIsFlowHookCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateSharedMCPAddsPlaywright(t *testing.T) {
+	tests := []struct {
+		name           string
+		mainJSON       string
+		wantAdded      []string
+		wantPCSServer  bool
+		wantNoDriftFor string
+	}{
+		{name: "main without playwright gains the pcs server", mainJSON: `{"mcpServers": {"engram": {"command": "engram"}}}`, wantAdded: []string{"playwright"}, wantPCSServer: true},
+		{name: "main playwright is kept unchanged", mainJSON: `{"mcpServers": {"engram": {"command": "engram"}, "playwright": {"command": "custom-playwright"}}}`, wantAdded: nil},
+		{name: "defaults gain the pcs server", mainJSON: `{}`, wantAdded: []string{"engram", "playwright"}, wantPCSServer: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			fakeEngram := filepath.Join(dir, "engram")
+			if err := os.WriteFile(fakeEngram, []byte("x"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			origLook, origFallback := LookPathFunc, EngramFallbackPaths
+			LookPathFunc = func(string) (string, error) { return fakeEngram, nil }
+			t.Cleanup(func() { LookPathFunc, EngramFallbackPaths = origLook, origFallback })
+
+			mainPath := filepath.Join(dir, ".claude.json")
+			if err := os.WriteFile(mainPath, []byte(tt.mainJSON), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			sharedPath := filepath.Join(dir, "profile", "shared-mcp.json")
+			res, err := GenerateSharedMCP(sharedPath, mainPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(res.AddedServers, tt.wantAdded) {
+				t.Fatalf("AddedServers = %v, want %v", res.AddedServers, tt.wantAdded)
+			}
+			b, err := os.ReadFile(sharedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				MCPServers map[string]map[string]any `json:"mcpServers"`
+			}
+			if err := json.Unmarshal(b, &doc); err != nil {
+				t.Fatal(err)
+			}
+			pw := doc.MCPServers[ServerPlaywright]
+			args, _ := json.Marshal(pw["args"])
+			isPCS := pw["command"] == "npx" && string(args) == `["-y","`+PlaywrightMCPPackage+`","--output-dir","`+PlaywrightOutputDir+`"]`
+			if isPCS != tt.wantPCSServer {
+				t.Fatalf("playwright server = %v (pcs server %v, want %v)", pw, isPCS, tt.wantPCSServer)
+			}
+			if drift, err := SharedMCPDrift(sharedPath, mainPath); err != nil || len(drift) != 0 {
+				t.Fatalf("SharedMCPDrift() = %v, %v; want none", drift, err)
+			}
+		})
+	}
+	if PlaywrightMCPPackage != "@playwright/mcp@0.0.83" || PlaywrightOutputDir != ".pcs/playwright" {
+		t.Fatalf("playwright constants = %q, %q", PlaywrightMCPPackage, PlaywrightOutputDir)
+	}
+}
