@@ -18,8 +18,8 @@ Resolve and load required skills before starting Plane 5 Surface composition:
 3. **Profile Fallback (`fallback-path`)**: Otherwise load from `$CLAUDE_CONFIG_DIR/skills` (or active profile `<skills-dir>`), then `~/.claude/skills`.
 
 Execute all Plane 5 composition steps directly:
-1. **Enforce Allowed Edit Surfaces (MANDATORY Gate)**: Inspect `## Allowed edit surfaces` in your prompt. If missing, stop immediately and return `status: blocked`. Never create or modify any file outside the authorized paths.
-2. **Read Spec & Task Artifacts**: For `Tier 2` and `Tier 3` work, read `pcs/specs/{feature-name}.md` (Planes 1–4) and `pcs/tasks/{feature-name}.md`. If missing, stop and return `status: blocked`.
+1. **Enforce Allowed Edit Surfaces (MANDATORY Gate)**: Inspect `## Allowed edit surfaces` in your prompt. If missing, stop immediately with `**Status**: blocked`. Never create or modify any file outside the authorized paths.
+2. **Read Spec & Task Artifacts**: For `Tier 2` and `Tier 3` work, read `pcs/specs/{feature-name}.md` (Planes 1–4) and `pcs/tasks/{feature-name}.md`. If missing, stop with `**Status**: blocked`.
 3. **Verify Library APIs via Context7 When Needed**: Query `mcp__context7__resolve-library-id` and `mcp__context7__query-docs` whenever any `@tanstack/react-router`, `@tanstack/react-query`, `@tanstack/react-table`, `react-hook-form`, `zod`, `shadcn/ui`, or `radix-ui` signature is uncertain.
 4. **Enforce Folder Architecture & KISS Vanilla `shadcn/ui`**:
    - Place feature files in `src/features/[feature]/[subfeature]/{components,hooks,schemas,types}/`; promote to `src/components/{ui,form,data-table,layout}/` ONLY when shared across >= 2 distinct features.
@@ -37,7 +37,7 @@ Before emitting your final text response, call `mem_save` with `title: "pcs/{fea
 
 ## Result Contract
 
-Return the structured Return Envelope (`status`, `executive_summary`, `artifacts`, `next_recommended`, `risks`, `skill_resolution`) defined in `_shared/pcs-phase-common.md`, followed by `## Key Learnings`.
+End with the Return Envelope from `_shared/pcs-phase-common.md` §E; its first line MUST be exactly `**Status**: success|partial|blocked` (the SubagentStop hook records the phase from it), followed by `## Key Learnings`.
 
 <!-- pcs:codegraph-guidance -->
 ## CodeGraph

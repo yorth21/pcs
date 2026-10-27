@@ -31,7 +31,7 @@ Before emitting your final text response, call `mem_save` with `title: "pcs/{fea
 
 ## Result Contract
 
-Return the structured Return Envelope (`status`, `executive_summary`, `artifacts`, `next_recommended`, `risks`, `skill_resolution`) defined in `_shared/pcs-phase-common.md`, followed by `## Key Learnings`.
+End with the Return Envelope from `_shared/pcs-phase-common.md` §E; its first line MUST be exactly `**Status**: success|partial|blocked` (the SubagentStop hook records the phase from it), followed by `## Key Learnings`.
 
 <!-- pcs:codegraph-guidance -->
 ## CodeGraph

@@ -21,6 +21,8 @@ func TestEmbeddedBlocksAndContracts(t *testing.T) {
 				"<!-- /pcs:orchestrator -->",
 				"Product-Centered Development (PCD)",
 				"## Allowed edit surfaces",
+				"pcs flow start --feature",
+				"pcs flow next --json",
 			},
 		},
 		{
@@ -31,6 +33,8 @@ func TestEmbeddedBlocksAndContracts(t *testing.T) {
 				"<!-- /pcs:ux-routing -->",
 				"### PCD Protocol",
 				"<!-- pcs:remote-authorization -->",
+				"`pcs-auditor`",
+				"pcs/audits/<feature>.md",
 			},
 		},
 		{
@@ -42,7 +46,9 @@ func TestEmbeddedBlocksAndContracts(t *testing.T) {
 			wantContains: []string{
 				"pcs/specs/",
 				"pcs/tasks/",
-				"skill_resolution",
+				"**Skill Resolution**",
+				"**Status**: success | partial | blocked",
+				"SubagentStop",
 				".atl/pcs-skill-registry.md",
 			},
 		},

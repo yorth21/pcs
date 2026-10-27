@@ -80,7 +80,7 @@ sequenceDiagram
     participant Store as Disk (pcs/*) + Engram
 
     User->>Orch: Request new feature / screen / workflow
-    Orch->>Orch: 1. Authorize & Classify Depth (Tier 1 / 2 / 3)
+    Orch->>Orch: 1. Authorize, run pcs flow start --kind t2|t3, then follow pcs flow next --json
     Orch->>Exp: 2. Map routes, domain entities, shared UI components
     Exp->>Store: Save pcs/<feature>/explore
     Exp-->>Orch: Return Envelope (codebase map + UX gaps)
@@ -165,6 +165,8 @@ All automated `mem_save` calls inside `pcs` phases set `capture_prompt: false` (
 | `UserPromptSubmit` | — | `pcs hook user-prompt-submit` | Injects the start rule (no flow) or the active flow's status and next step |
 
 Flow kinds and their mandatory ordered phases (`pcs flow start --kind ...`): `audit` = `explore` (`pcs-explorer`) -> `audit` (`pcs-auditor` or `pcs-verifier`); `inline` = no delegated phases, main-thread budget of 3 counted reads and 1 edited file; `t2` and `t3` = `explore` -> `strategy` (`pcs-strategist`) -> `architecture` (`pcs-architect`) -> `apply` (`pcs-builder`) -> `verify` (`pcs-verifier`).
+
+The injected routing makes `pcs flow start` the first action of any request that needs project files and has the Coordinator execute each `pcs flow next --json` transition verbatim; it carries no call-count threshold for inline work. An `audit` flow (read-only review of existing UI) never runs inline: `pcs-explorer` maps the feature, `pcs-auditor` returns a baseline Audit Report without needing a spec, and the Coordinator writes it to `pcs/audits/<feature>.md`, saves Engram `pcs/<feature>/audit`, and runs `pcs flow close`. App login credentials travel only inside the delegated prompt.
 
 | MCP Server | Configured Command | `settings.json` Permissions & Plugins |
 |------------|--------------------|---------------------------------------|

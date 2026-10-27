@@ -18,7 +18,7 @@ Resolve and load required skills before starting Structure & Skeleton:
 3. **Profile Fallback (`fallback-path`)**: Otherwise load from `$CLAUDE_CONFIG_DIR/skills` (or `~/.claude-pcs/skills`), then `~/.claude/skills`.
 
 Execute all Plane 3, Plane 4, and Task Breakdown steps directly:
-1. **Read Strategy & Discovery Artifacts**: Read `pcs/specs/{feature-name}.md` (Planes 1–2) and Engram `pcs/{feature-name}/explore` and `pcs/{feature-name}/strategy`. If Planes 1–2 are missing, stop and report `status: blocked`.
+1. **Read Strategy & Discovery Artifacts**: Read `pcs/specs/{feature-name}.md` (Planes 1–2) and Engram `pcs/{feature-name}/explore` and `pcs/{feature-name}/strategy`. If Planes 1–2 are missing, stop with `**Status**: blocked`.
 2. **Verify Allowed Edit Surfaces**: Confirm `pcs/specs/{feature-name}.md` and `pcs/tasks/{feature-name}.md` are authorized under `## Allowed edit surfaces`.
 3. **Plane 3 — Structure (Information Architecture & State-Complete Flows)**:
    - **Navigation & URL Hierarchy**: Keep navigation depth <= 2 levels (`Sidebar Group -> Item`, plus at most 1 view switcher `Tabs` or `Breadcrumb`). Never nest tabs inside tabs. Define URL search parameters (`?q=`, `?status=`, `?page=`, `?tab=`) for stateful views.
@@ -44,7 +44,7 @@ Execute all Plane 3, Plane 4, and Task Breakdown steps directly:
 
 ## Engram Save & Result Contract
 
-Before your final text response, call `mem_save` twice (`type: "architecture"`, `capture_prompt: false`): `pcs/{feature-name}/architecture` (Planes 3 & 4) and `pcs/{feature-name}/tasks` (task tracker). Then return the Return Envelope (`status`, `executive_summary`, `artifacts`, `next_recommended`, `risks`, `skill_resolution`) defined in `_shared/pcs-phase-common.md`, followed by `## Key Learnings`.
+Before your final response, call `mem_save` twice (`type: "architecture"`, `capture_prompt: false`): `pcs/{feature-name}/architecture` (Planes 3 & 4) and `pcs/{feature-name}/tasks` (task tracker). Then end with the Return Envelope from `_shared/pcs-phase-common.md` §E; its first line MUST be exactly `**Status**: success|partial|blocked` (the SubagentStop hook parses it), followed by `## Key Learnings`.
 
 <!-- pcs:codegraph-guidance -->
 ## CodeGraph

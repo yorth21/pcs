@@ -48,8 +48,8 @@ This file is the authoritative registry of orchestrator blocks, native subagents
 | `<!-- pcs:codegraph-guidance -->` ... `<!-- /pcs:codegraph-guidance -->` | Structural AST exploration rules and safe `pcs codegraph init` workflow | `internal/assets/assets.go` |
 | `<!-- pcs:persona -->` ... `<!-- /pcs:persona -->` | Coordinator persona (`gentleman` or `neutral`) and English Artifact Language Contract | `internal/assets/assets.go` |
 | `<!-- pcs:engram-protocol -->` ... `<!-- /pcs:engram-protocol -->` | Persistent cross-session memory protocol (`mcp__engram__*`) | `internal/assets/assets.go` |
-| `<!-- pcs:orchestrator -->` ... `<!-- /pcs:orchestrator -->` | Product & UX/UI Coordinator role, Lossless Blocking Prompts, Allowed Edit Surfaces, Skill & Stack Adapter Resolution, and UX Delegation Triggers | `brain/orchestrator/pcs-orchestrator.md` |
-| `<!-- pcs:ux-routing -->` ... `<!-- /pcs:ux-routing -->` | Mandatory 8-step Product-Centered Development (PCD) workflow across the 5 Planes of UX | `brain/orchestrator/pcs-routing.md` |
+| `<!-- pcs:orchestrator -->` ... `<!-- /pcs:orchestrator -->` | Product & UX/UI Coordinator role, Lossless Blocking Prompts, Allowed Edit Surfaces, Flow-First Rule (`pcs flow start` / `pcs flow next --json`), and the Launch Payload Contract | `brain/orchestrator/pcs-orchestrator.md` |
+| `<!-- pcs:ux-routing -->` ... `<!-- /pcs:ux-routing -->` | Flow kinds (`audit`, `inline`, `t2`, `t3`) and the mandatory 8-step Product-Centered Development (PCD) workflow across the 5 Planes of UX | `brain/orchestrator/pcs-routing.md` |
 
 ---
 

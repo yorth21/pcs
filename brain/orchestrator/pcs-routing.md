@@ -1,42 +1,32 @@
 <!-- pcs:ux-routing -->
 ## UX & Product Routing — Product-Centered Development (PCD)
 
-Product-Centered Development (PCD) is the mandatory workflow of this orchestrator. Every frontend, UI, or product request enters this 8-step protocol automatically in sequence. Never describe PCD passively—execute it.
+PCD is the mandatory workflow for every frontend, UI, or product request. Execute it; never only describe it.
 
-### PCD Protocol (MANDATORY, in this order, on every request)
+### Flow Kinds (choose at `pcs flow start`)
 
-1. **Authorize.**
-   Determine whether the request authorizes code/spec mutation or is read-only. Usability audits, flow reviews, and layout comparisons are **read-only** (`pcs-explorer` + `pcs-verifier` diagnostic mode; zero writes) unless the user asks to build, implement, refactor, or write specs/code. If ambiguous, ask 1 concise question and stay read-only.
+| Kind | Use for | Mandatory phases, in `pcs flow next` order |
+|------|---------|--------------------------------------------|
+| `audit` | Read-only review, critique, or usability audit of EXISTING UI; no spec needed. Never inline. | `explore` (`pcs-explorer`) -> `audit` (`pcs-auditor`) |
+| `inline` | Tier 1: one-file token, spacing, `tabular-nums`, `aria-*`, or copy fix; unchanged flow and containers; <=3 source reads, 1 edited file | none; work in the main thread, then `pcs flow close` |
+| `t2` | Tier 2: bounded subfeature (dialog/sheet form, table filters/columns, state refactor) | `explore` -> `strategy` (`pcs-strategist`) -> `architecture` (`pcs-architect`) -> `apply` (`pcs-builder`) -> `verify` (`pcs-verifier`) |
+| `t3` | Tier 3: new screen, user flow, or feature redesign | as `t2`, full 5-Plane depth, human checkpoint on major trade-offs |
 
-2. **Explore (`pcs-explorer`).**
-   - `Tier 1` 1-file tweaks: inspect inline (<=3 calls, ~10k tokens).
-   - `Tier 2` / `Tier 3`: if `.codegraph/` is missing and CodeGraph is available, run `pcs codegraph init --cwd <project-root>` once via Bash before delegating `pcs-explorer` (read-only without Bash).
-   - Delegate `pcs-explorer` (`mcp__codegraph__codegraph_explore` first) to map routes, URL search params, shared `src/components/{ui,form,data-table,layout}/`, `src/features/<feature>/`, domain entities, and UX gaps (<=2k-token handoff with `path:line` evidence). Save `pcs/<feature-name>/explore`.
+When unsure, choose the deeper kind. If an `inline` budget runs out: `pcs flow close --abandon --reason "..."`, then start `t2` or `audit`.
 
-3. **Resolve UX Uncertainty (Max 1 Blocking Question).**
-   Evaluate missing context across **Role & Environment**, **Frequency & Urgency** (daily workbench vs. occasional setup), and **Business & Risk Constraints** (reversible vs. destructive). If a genuine fork exists, ask **at most ONE blocking question** via Lossless Blocking Prompts and **STOP**. Otherwise, record **Declared Assumptions** in `pcs/specs/<feature-name>.md`.
+### PCD Protocol (MANDATORY, in order)
 
-4. **Classify Depth (`Tier 1`, `Tier 2`, or `Tier 3`).**
-   - **Tier 1 — Micro-Surface Fix**: 1-file token, spacing, `tabular-nums`, or `aria-*` fix with unchanged flow/containers. Execute inline or via 1 `pcs-builder` task.
-   - **Tier 2 — Bounded Subfeature**: New dialog/sheet form, table filters/columns, or state refactor. Write condensed 5-Plane spec (`pcs/specs/<feature-name>.md`) and tasks (`pcs/tasks/<feature-name>.md`) via `pcs-strategist` + `pcs-architect`, then run `pcs-builder` and `pcs-verifier`.
-   - **Tier 3 — Full Feature / New Screen**: Full 5-Plane pipeline (`pcs-explorer` -> `pcs-strategist` -> `pcs-architect` -> human checkpoint if major trade-offs -> `pcs-builder` -> `pcs-verifier`).
+1. **Authorize & start.** Audits, flow reviews, and layout comparisons are read-only (`audit`) unless the user asks to build, implement, refactor, or write specs/code; if ambiguous, ask 1 question and stay read-only. Read-only means no source edits; `pcs/` artifacts are still written. Run `pcs flow start`; if `.codegraph/` is missing and CodeGraph is available, run `pcs codegraph init --cwd <project-root>` once.
+2. **Explore (`pcs-explorer`).** Map routes, URL search params, shared `src/components/{ui,form,data-table,layout}/`, `src/features/<feature>/`, domain entities, and UX gaps (<=2k-token handoff, `path:line` evidence). Engram `pcs/<feature>/explore`.
+3. **Resolve UX uncertainty.** Check Role & Environment, Frequency & Urgency, and Business & Risk. For a genuine fork, ask ONE question via Lossless Blocking Prompts and STOP. Otherwise record Declared Assumptions (`pcs-strategist` in the spec; the Audit Report in `audit` flows).
+4. **Audit (`audit` flows, `pcs-auditor`).** Pass the explorer handoff and the dev-server URL if known. Closure: write the Audit Report verbatim to `pcs/audits/<feature>.md`, save Engram `pcs/<feature>/audit` (`capture_prompt: false`), run `pcs flow close`, and report the verdict (Severity 3–4 count) and top fixes.
+5. **Specify before the first `.tsx` write (`t2`/`t3` gate).** `pcs-strategist`: Planes 1–2 (Role, JTBD, Declared Assumptions, Metrics; ORCA matrix, HTA/KLM step budget, MVP slice) -> spec + `pcs/<feature>/strategy`. `pcs-architect`: Planes 3–4 (IA <=2 levels, URL params, Happy Path + 5 Negative Paths; Container Matrix, Friction Matrix, 7 Cognitive Laws, ASCII wireframe) -> spec, `pcs/tasks/<feature>.md`, `pcs/<feature>/architecture` and `pcs/<feature>/tasks`.
+6. **Compose (`pcs-builder`).** One work unit per delegation. Enforce vanilla `shadcn/ui` (no pass-through wrappers; `radix-ui` only when missing); feature code in `src/features/<feature>/<subfeature>/{components,hooks,schemas,types}/`, promoted to `src/components/{ui,form,data-table,layout}/` only across >=2 features; no Atomic Design suffixes; 5 Negative States (separate `Zero-Data` and `No-Results`, geometry-matched `Skeleton` with `CLS = 0`, isolated `Partial Error` retry, inline `FieldError` with `aria-invalid`); 60-30-10 color, 3-level typography, >=25% whitespace, `tabular-nums`.
+7. **Verify (`pcs-verifier`, post-build).** Audit against the spec: 10 Usability Heuristics (`0–4`), 4-Question Cognitive Walkthrough (<400ms), 5 Negative States, WCAG 2.2 AA keyboard walk, safe Playwright lifecycle (reuse a running dev server and never kill it; `1440x900` and `390x844`, or static fallback). **Hard Gate**: zero Severity `3–4` at closure.
+8. **Close, persist & resume.** Sync spec, tasks, and Engram (`pcs/<feature>/verify`, `pcs/<feature>/tasks`), run the `close` transition, then report UX decisions, verified states, verdict, and next step. Resume with `pcs flow status`, then `mem_context` -> `mem_search` (`pcs/<feature>/`) -> `mem_get_observation`, reconciled with `pcs/specs/` and `pcs/tasks/`.
 
-5. **Specify & Track Before the First `.tsx` Write (MANDATORY Gate).**
-   For `Tier 2` and `Tier 3`, **zero `.tsx` files may be written** until Planes 1–4 are persisted:
-   - **Planes 1 & 2 (`pcs-strategist`)**: Write Strategy (Role, JTBD, Declared Assumptions, Metrics) and Scope (OOUX ORCA Matrix, HTA/KLM Pruned Step Budget, MVP slice) to `pcs/specs/<feature-name>.md` + Engram `pcs/<feature-name>/strategy`.
-   - **Planes 3 & 4 (`pcs-architect`)**: Complete `pcs/specs/<feature-name>.md` with Structure (IA <=2 levels, URL params, **Happy Path + 5 Negative Paths**) and Skeleton (**Context-Dependent Container Matrix**, **Risk-Proportional Friction Matrix**, 7 Cognitive Laws, ASCII Wireframe). Write ordered work units to `pcs/tasks/<feature-name>.md` + Engram `pcs/<feature-name>/architecture` and `pcs/<feature-name>/tasks`.
-
-6. **Compose Surface Task-by-Task (`pcs-builder`).**
-   Delegate work units sequentially to `pcs-builder` with `## Feature locator`, `## Allowed edit surfaces`, `## Skills to load before work`, and `## Key Learnings`. Enforce:
-   - **KISS & Vanilla `shadcn/ui`**: Compose `src/components/ui/*` directly; zero pass-through wrappers; `radix-ui` only when missing in `shadcn/ui`.
-   - **Folder & Promotion Rules**: Feature code in `src/features/<feature>/<subfeature>/{components,hooks,schemas,types}/`; promote to `src/components/{ui,form,data-table,layout}/` only across >=2 features; zero Atomic Design suffixes.
-   - **5 Negative States & Surface Discipline**: Separate `Zero-Data` and `No-Results`, geometry-matched `Skeleton` (`CLS = 0`), isolated `Partial Error` retry, inline `FieldError` (`aria-invalid`), 60-30-10 color budget, 3-level typography, >=25% whitespace, and `tabular-nums`.
-
-7. **Verify UX, Accessibility & Live Rendering (`pcs-verifier`).**
-   Delegate `pcs-verifier` to audit against `pcs/specs/<feature-name>.md`: **10 Usability Heuristics (`0–4`)**, **4-Question Cognitive Walkthrough** (<400ms Doherty), **5 Negative States**, **WCAG 2.2 AA / Keyboard Walk**, and **Safe Playwright Lifecycle** (probe existing dev server without killing it; `EXIT` trap cleanup for ephemeral servers; inspect `1440x900` and `390x844`, or static audit fallback). **Hard Gate**: Zero Severity `3–4` findings at closure.
-
-8. **Close, Persist & Resume.**
-   Sync `pcs/specs/<feature-name>.md`, `pcs/tasks/<feature-name>.md`, and Engram (`pcs/<feature-name>/verify`, `pcs/<feature-name>/tasks`), then report UX decisions, verified states, verdict, and next step. When resuming, reconcile `mem_context` -> `mem_search` (`pcs/<feature-name>/`) -> `mem_get_observation` with on-disk `pcs/specs/` and `pcs/tasks/`.
+### App Credentials
+Pass app login credentials the user supplies only inside the delegated `pcs-auditor` or `pcs-verifier` prompt. Never write them to files, Engram, flow state, or summaries.
 
 <!-- pcs:remote-authorization -->
 ## Remote operation authorization

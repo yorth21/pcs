@@ -27,7 +27,7 @@ Execute the audit directly:
    - Read `browser_console_messages` for errors and warnings.
    - If no server responds or Playwright is unavailable, run the full static JSX/TSX audit and state `Visual Pass: Skipped (static fallback: <reason>)`.
 3. **Output the Audit Report** (Markdown, ready to persist verbatim):
-   - **Scope & Method**: feature, files, URL and viewports, or the static fallback.
+   - **Scope & Method**: feature, files, URL and viewports (or the static fallback), and Declared Assumptions (role, frequency of use, risk).
    - **10 Usability Heuristics**: table `# | Heuristic | Severity 0–4 | Evidence (path:line or screenshot/state) | Finding`.
    - **5 Negative States**: checklist `Zero-Data`, `No-Results` (separate branch from Zero-Data), `Skeleton` (geometry-matched, `CLS = 0`), `Partial Error` (isolated retry), `Inline FieldError` (`aria-invalid` + `aria-describedby`); mark present, missing, or N/A with evidence.
    - **Cognitive Walkthrough**: for each step of the primary task, Q1 Intent, Q2 Visibility, Q3 Association, Q4 Feedback (<400ms).
