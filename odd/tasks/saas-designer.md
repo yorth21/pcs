@@ -45,10 +45,10 @@ Out of scope: more flow machinery beyond the fix loop and in-flight tracking, ot
 ## Tasks
 
 - [x] T1 — Flow: rename phase `architecture` → `compose` for t2/t3 (agent stays `pcs-architect`), bounded verify → fix loop (max 3 fix rounds, then await the user), and in-flight tracking of background delegations so the Stop hook does not block while a delegated phase runs. Route: delegated (2+ non-trivial Go files).
-- [ ] T2 — Brain: new stack-agnostic `pcs-saas` skill (page templates, organisms, molecules, template decision tree, state matrices, container and friction rules, visual consistency and density rules, Page Composition Spec format). Route: delegated (multi-file content).
-- [ ] T3 — Adapter: React + shadcn/ui blueprint per page template plus pattern-to-component mapping reference. Route: delegated.
-- [ ] T4 — Agents and routing: trimmed strategist, architect → composer of the Page Composition Spec, builder fix mode, verifier contract checks with fix-ready findings, explorer UI inventory, orchestrator autonomy (one intake round), spec template and pcs-core references trimmed. Route: delegated.
-- [ ] T5 — Benchmark: tasks, rubric, blind judge protocol, and runner notes under `docs/bench/`. Route: delegated.
+- [x] T2 — Brain (commit `b89c8ef`; 18 templates, 26 organisms, 19 molecules, S1–S7, Page Composition Spec in 04 §4, VC-01..16): new stack-agnostic `pcs-saas` skill (page templates, organisms, molecules, template decision tree, state matrices, container and friction rules, visual consistency and density rules, Page Composition Spec format). Route: delegated (multi-file content).
+- [x] T3 — Adapter: React + shadcn/ui blueprint per page template plus pattern-to-component mapping reference. Route: delegated.
+- [x] T4 — Agents and routing: trimmed strategist, architect → composer of the Page Composition Spec, builder fix mode, verifier contract checks with fix-ready findings, explorer UI inventory, orchestrator autonomy (one intake round), spec template and pcs-core references trimmed. Route: delegated.
+- [x] T5 — Benchmark (commit `e2f4605`): tasks, rubric, blind judge protocol, and runner notes under `docs/bench/`. Route: delegated.
 - [ ] T6 — Run the benchmark (baseline vs pcs) on the credi-siian test worktree, record scores, iterate on the catalog where pcs loses. Route: delegated per run.
 
 ## Acceptance criteria
@@ -63,6 +63,10 @@ Out of scope: more flow machinery beyond the fix loop and in-flight tracking, ot
 - 2026-10-27: Branch `feat/saas-designer` created; RDD is off globally (no native review ceremony).
 - T1 done (delegated writer, trigger: 2+ non-trivial Go files) — commit `6500a6f`. New transition kinds `wait` and `await`; `FixRounds` counts every pcs-builder run while verify is blocked; `in_flight: [{agent_type, phase, started_at}]` with a 30 min TTL. Known risk: an allowed launch that never runs keeps its in-flight entry until the TTL.
 - T5 benchmark protocol written in `docs/bench/README.md` (inline, single doc). Tasks B1 agreements directory, B2 settings, B3 operations dashboard on Portal Convenios; baseline worktrees `credi-siian-worktrees/bench-b{1,2,3}-base` from `ada76ff1`.
+
+- T3 done (delegated) — commit `b69b947`: `05-saas-pattern-mapping.md` covers all 63 catalog IDs; 8 template blueprints under `assets/templates/`.
+- T4 done (delegated) — commit `6504512`; follow-up `1ab6dd5` adds `--caps network` to the pcs Playwright MCP because `browser_run_code` does not exist in 0.0.83 and `browser_route`/`browser_network_state_set` need the network capability.
+- T6 started: baselines committed (B1 `d2961e3e`, B2 `fd53ed80`, B3 `a6b95e07`); pcs binary rebuilt at `b69b947`, profile synced, doctor HEALTHY; pcs run B1 launched headless on port 5181.
 
 ## Verification evidence
 
