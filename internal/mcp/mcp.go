@@ -27,6 +27,10 @@ const (
 	// PlaywrightOutputDir is the project-relative directory where the
 	// Playwright MCP server writes screenshots and traces.
 	PlaywrightOutputDir = ".pcs/playwright"
+	// PlaywrightCaps enables the network tools (browser_route, browser_unroute,
+	// browser_network_state_set) the verifier uses to force empty, error, and
+	// offline states.
+	PlaywrightCaps = "network"
 
 	PrePCSBackupSuffix = ".pre-pcs.bak"
 )
@@ -636,7 +640,7 @@ func ReadMainProfileMCPServers(mainClaudeJSONPath string) (map[string]any, bool,
 func PlaywrightServerDefinition() map[string]any {
 	return map[string]any{
 		"command": "npx",
-		"args":    []any{"-y", PlaywrightMCPPackage, "--output-dir", PlaywrightOutputDir},
+		"args":    []any{"-y", PlaywrightMCPPackage, "--output-dir", PlaywrightOutputDir, "--caps", PlaywrightCaps},
 	}
 }
 

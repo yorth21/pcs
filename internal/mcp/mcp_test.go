@@ -419,7 +419,7 @@ func TestGenerateSharedMCPAddsPlaywright(t *testing.T) {
 			}
 			pw := doc.MCPServers[ServerPlaywright]
 			args, _ := json.Marshal(pw["args"])
-			isPCS := pw["command"] == "npx" && string(args) == `["-y","`+PlaywrightMCPPackage+`","--output-dir","`+PlaywrightOutputDir+`"]`
+			isPCS := pw["command"] == "npx" && string(args) == `["-y","`+PlaywrightMCPPackage+`","--output-dir","`+PlaywrightOutputDir+`","--caps","`+PlaywrightCaps+`"]`
 			if isPCS != tt.wantPCSServer {
 				t.Fatalf("playwright server = %v (pcs server %v, want %v)", pw, isPCS, tt.wantPCSServer)
 			}
