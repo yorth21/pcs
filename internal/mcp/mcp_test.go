@@ -70,7 +70,7 @@ func TestMergeClaudeJSON(t *testing.T) {
 				}
 			}
 
-			res, err := MergeClaudeJSONWithDelta(claudePath, tt.components)
+			res, err := MergeClaudeJSONWithDelta(claudePath, tt.components, true)
 			if err != nil {
 				t.Fatalf("MergeClaudeJSONWithDelta() error: %v", err)
 			}
@@ -163,11 +163,11 @@ func TestMergeSettingsJSONAndUnmergeWithDelta(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	claudeDelta, err := MergeClaudeJSONWithDelta(claudePath, nil)
+	claudeDelta, err := MergeClaudeJSONWithDelta(claudePath, nil, true)
 	if err != nil {
 		t.Fatalf("MergeClaudeJSONWithDelta() error: %v", err)
 	}
-	settingsDelta, err := MergeSettingsJSONWithDelta(settingsPath, nil, `C:\Users\dev\.claude-pcs`, true, true)
+	settingsDelta, err := MergeSettingsJSONWithDelta(settingsPath, nil, `C:\Users\dev\.claude-pcs`, true, true, true)
 	if err != nil {
 		t.Fatalf("MergeSettingsJSONWithDelta() error: %v", err)
 	}

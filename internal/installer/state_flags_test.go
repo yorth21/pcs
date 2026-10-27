@@ -157,7 +157,7 @@ func TestLegacyStateWithoutFlagFieldsKeepsCurrentBehavior(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Legacy sync still copies a missing statusLine (no opt-out recorded).
+	// Legacy sync still copies a missing statusLine: added_status_line proves the install did not opt out.
 	settings := readSettings(t, profileDir)
 	delete(settings, "statusLine")
 	writeSettings(t, profileDir, settings)

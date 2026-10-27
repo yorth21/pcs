@@ -193,12 +193,24 @@ func Run(opts Options) (*DiagnosticReport, error) {
 			checkTargetBool("skill:"+skillName, present,
 				"installed", "missing from skills/")
 		}
-		for srv, present := range status.MCPServers {
-			st := "ok"
-			msg := "configured in MCP JSON"
-			if !present {
-				st = "warn"
-				msg = "not configured in MCP JSON"
+		// A profile session reads MCP servers from shared-mcp.json (passed by the
+		// launcher) as well as from the profile .claude.json.
+		var sharedServers map[string]bool
+		if scope == installer.ScopeProfile {
+			sharedServers, _ = mcp.InspectConfiguredServers(filepath.Join(targetDir, "shared-mcp.json"))
+		}
+		for _, srv := range mcp.DefaultComponents {
+			st, msg := "ok", "configured in MCP JSON"
+			switch {
+			case sharedServers != nil && sharedServers[srv]:
+				msg = "configured in shared-mcp.json"
+			case status.MCPServers[srv] && sharedServers != nil:
+				msg = "configured in the profile .claude.json"
+			case status.MCPServers[srv]:
+			case sharedServers != nil:
+				st, msg = "warn", "not configured in shared-mcp.json or the profile .claude.json. Run 'pcs sync --scope profile' to refresh shared-mcp.json from the main profile"
+			default:
+				st, msg = "warn", "not configured in MCP JSON"
 			}
 			addCheck("target-mcp", "mcp:"+srv, st, msg)
 		}

@@ -47,7 +47,11 @@ type ClaudeMergeResult struct {
 
 // SettingsMergeResult records the exact delta applied by MergeSettingsJSONWithDelta.
 type SettingsMergeResult struct {
-	CreatedFile      bool     `json:"created_file"`
+	CreatedFile bool `json:"created_file"`
+	// CreatedKeys lists the containers this merge created in an existing file
+	// ("permissions", "permissions.allow", "enabledPlugins"), so an uninstall
+	// can prune them once empty.
+	CreatedKeys      []string `json:"created_keys,omitempty"`
 	AddedPermissions []string `json:"added_permissions"`
 	AddedPlugins     []string `json:"added_plugins"`
 	AddedHook        bool     `json:"added_hook"`
@@ -57,6 +61,9 @@ type SettingsMergeResult struct {
 type UnmergeDelta struct {
 	CreatedClaudeJSON   bool
 	CreatedSettingsJSON bool
+	// CreatedSettingsKeys lists the settings.json containers pcs created (see
+	// SettingsMergeResult.CreatedKeys); each is pruned when it ends up empty.
+	CreatedSettingsKeys []string
 	AddedMCPServers     []string
 	AddedPermissions    []string
 	AddedPlugins        []string
@@ -127,7 +134,7 @@ func ServerDefinition(component string) (map[string]any, error) {
 
 // MergeClaudeJSON merges missing MCP server entries into path.
 func MergeClaudeJSON(path string, components []string) error {
-	_, err := MergeClaudeJSONWithDelta(path, components)
+	_, err := MergeClaudeJSONWithDelta(path, components, true)
 	return err
 }
 
@@ -135,9 +142,10 @@ func MergeClaudeJSON(path string, components []string) error {
 // an empty object if absent), preserves all existing user keys and pre-existing
 // MCP servers (never overwriting an existing server entry such as engram),
 // adds only missing MCP server entries, creates a one-time .pre-pcs.bak backup
-// when the file already existed, and writes formatted JSON atomically while
-// preserving file permissions (defaulting to 0600 for .claude.json).
-func MergeClaudeJSONWithDelta(path string, components []string) (*ClaudeMergeResult, error) {
+// when the file already existed and backup is true (false when pcs created the
+// file, whose content is then pcs's own), and writes formatted JSON atomically
+// while preserving file permissions (defaulting to 0600 for .claude.json).
+func MergeClaudeJSONWithDelta(path string, components []string, backup bool) (*ClaudeMergeResult, error) {
 	if len(components) == 0 {
 		components = DefaultComponents
 	}
@@ -164,7 +172,7 @@ func MergeClaudeJSONWithDelta(path string, components []string) (*ClaudeMergeRes
 		res.AddedServers = append(res.AddedServers, comp)
 	}
 
-	if existed {
+	if existed && backup {
 		if err := WritePrePCSBackupOnce(path, rawExisting, perm); err != nil {
 			return nil, err
 		}
@@ -178,14 +186,16 @@ func MergeClaudeJSONWithDelta(path string, components []string) (*ClaudeMergeRes
 // MergeSettingsJSON merges MCP tool permissions, enabledPlugins, and the
 // UserPromptSubmit skill-registry refresh hook into settings.json.
 func MergeSettingsJSON(path string, components []string, targetDir string) error {
-	_, err := MergeSettingsJSONWithDelta(path, components, targetDir, true, true)
+	_, err := MergeSettingsJSONWithDelta(path, components, targetDir, true, true, true)
 	return err
 }
 
 // MergeSettingsJSONWithDelta merges requested MCP permissions/plugins (when
 // writeMCPConfig is true) and/or the UserPromptSubmit skill-registry hook (when
-// writeHook is true) into settings.json, recording only newly added items.
-func MergeSettingsJSONWithDelta(path string, components []string, targetDir string, writeMCPConfig, writeHook bool) (*SettingsMergeResult, error) {
+// writeHook is true) into settings.json, recording only newly added items and
+// the containers it created. An existing file gets a one-time .pre-pcs.bak
+// backup only when backup is true (false when pcs created the file).
+func MergeSettingsJSONWithDelta(path string, components []string, targetDir string, writeMCPConfig, writeHook, backup bool) (*SettingsMergeResult, error) {
 	if len(components) == 0 {
 		components = DefaultComponents
 	}
@@ -201,7 +211,13 @@ func MergeSettingsJSONWithDelta(path string, components []string, targetDir stri
 
 	if writeMCPConfig {
 		// 1. Merge permissions.allow without duplicates.
+		if _, ok := root["permissions"].(map[string]any); !ok {
+			res.CreatedKeys = append(res.CreatedKeys, "permissions")
+		}
 		permissions := ensureMap(root, "permissions")
+		if _, ok := permissions["allow"]; !ok {
+			res.CreatedKeys = append(res.CreatedKeys, "permissions.allow")
+		}
 		allowList := ensureStringSlice(permissions, "allow")
 		for _, p := range permissionsForComponents(components) {
 			if !slices.Contains(allowList, p) {
@@ -213,6 +229,9 @@ func MergeSettingsJSONWithDelta(path string, components []string, targetDir stri
 
 		// 2. Configure enabledPlugins (engram@engram: true when engram is enabled and not already set).
 		if slices.Contains(components, ServerEngram) {
+			if _, ok := root["enabledPlugins"].(map[string]any); !ok {
+				res.CreatedKeys = append(res.CreatedKeys, "enabledPlugins")
+			}
 			enabledPlugins := ensureMap(root, "enabledPlugins")
 			if _, exists := enabledPlugins["engram@engram"]; !exists {
 				enabledPlugins["engram@engram"] = true
@@ -227,7 +246,7 @@ func MergeSettingsJSONWithDelta(path string, components []string, targetDir stri
 		res.AddedHook = ensureSkillRegistryHook(hooks, targetDir)
 	}
 
-	if existed {
+	if existed && backup {
 		if err := WritePrePCSBackupOnce(path, rawExisting, perm); err != nil {
 			return nil, err
 		}
@@ -315,11 +334,13 @@ func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelt
 						}
 					}
 					perms["allow"] = filtered
-					if len(filtered) == 0 && delta.CreatedSettingsJSON {
+					if len(filtered) == 0 && delta.createdSettingsKey("permissions.allow") {
 						delete(perms, "allow")
+						changed = true
 					}
-					if len(perms) == 0 && delta.CreatedSettingsJSON {
+					if len(perms) == 0 && delta.createdSettingsKey("permissions") {
 						delete(root, "permissions")
+						changed = true
 					}
 				}
 			}
@@ -331,8 +352,9 @@ func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelt
 							changed = true
 						}
 					}
-					if len(plugins) == 0 && delta.CreatedSettingsJSON {
+					if len(plugins) == 0 && delta.createdSettingsKey("enabledPlugins") {
 						delete(root, "enabledPlugins")
+						changed = true
 					}
 				}
 			}
@@ -348,6 +370,12 @@ func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelt
 	}
 
 	return nil
+}
+
+// createdSettingsKey reports whether pcs created the settings.json container
+// key: either the whole file or that container was created by pcs.
+func (d UnmergeDelta) createdSettingsKey(key string) bool {
+	return d.CreatedSettingsJSON || slices.Contains(d.CreatedSettingsKeys, key)
 }
 
 func appendMissing(list []string, items ...string) []string {
@@ -383,6 +411,27 @@ func InspectConfiguredServers(claudeJSONPath string) (map[string]bool, error) {
 		status[k] = present
 	}
 	return status, nil
+}
+
+// InspectSettingsDefaults reports whether settingsJSONPath holds any of the
+// default pcs permissions in permissions.allow and whether enabledPlugins has
+// an engram@engram entry (with any value). A missing file holds neither.
+func InspectSettingsDefaults(settingsJSONPath string) (hasPermissions, hasPlugin bool, err error) {
+	root, existed, _, _, err := readJSONObjectWithPerm(settingsJSONPath, 0o644)
+	if err != nil || !existed {
+		return false, false, err
+	}
+	if perms, ok := root["permissions"].(map[string]any); ok {
+		for _, p := range ensureStringSlice(perms, "allow") {
+			if slices.Contains(DefaultPermissionAllows, p) {
+				hasPermissions = true
+			}
+		}
+	}
+	if plugins, ok := root["enabledPlugins"].(map[string]any); ok {
+		_, hasPlugin = plugins["engram@engram"]
+	}
+	return hasPermissions, hasPlugin, nil
 }
 
 func permissionsForComponents(components []string) []string {
@@ -611,38 +660,41 @@ func GenerateSharedMCPFile(outPath, mainClaudeJSONPath string) (engramMissing bo
 	return engramMissing, writeJSONAtomicWithPerm(outPath, payload, 0o600)
 }
 
-// CopyStatusLineIfMissing copies statusLine from mainSettingsJSONPath into targetSettingsJSONPath
-// if targetSettingsJSONPath does not already define one. Returns true if a statusLine was copied.
-func CopyStatusLineIfMissing(targetSettingsJSONPath, mainSettingsJSONPath string) (bool, error) {
+// CopyStatusLineIfMissing copies statusLine from mainSettingsJSONPath into
+// targetSettingsJSONPath if targetSettingsJSONPath does not already define one.
+// It reports whether a statusLine was copied and whether that created the
+// target file. An existing target gets a one-time .pre-pcs.bak backup only when
+// backup is true (false when pcs created the file).
+func CopyStatusLineIfMissing(targetSettingsJSONPath, mainSettingsJSONPath string, backup bool) (copied, created bool, err error) {
 	if _, err := os.Stat(mainSettingsJSONPath); os.IsNotExist(err) {
-		return false, nil
+		return false, false, nil
 	}
 	mainRoot, _, _, _, err := readJSONObjectWithPerm(mainSettingsJSONPath, 0o644)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	statusLineVal, ok := mainRoot["statusLine"]
 	if !ok || statusLineVal == nil {
-		return false, nil
+		return false, false, nil
 	}
 
 	targetRoot, existed, rawExisting, perm, err := readJSONObjectWithPerm(targetSettingsJSONPath, 0o644)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if _, alreadyHas := targetRoot["statusLine"]; alreadyHas {
-		return false, nil
+		return false, false, nil
 	}
 	targetRoot["statusLine"] = statusLineVal
-	if existed {
+	if existed && backup {
 		if err := WritePrePCSBackupOnce(targetSettingsJSONPath, rawExisting, perm); err != nil {
-			return false, err
+			return false, false, err
 		}
 	}
 	if err := writeJSONAtomicWithPerm(targetSettingsJSONPath, targetRoot, perm); err != nil {
-		return false, err
+		return false, false, err
 	}
-	return true, nil
+	return true, !existed, nil
 }
 
 // RemoveStatusLine removes the statusLine key from targetSettingsJSONPath if present.
