@@ -9,17 +9,20 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/yorth21/pcs/internal/doctor"
 	"github.com/yorth21/pcs/internal/flow"
+	"github.com/yorth21/pcs/internal/hook"
 	"github.com/yorth21/pcs/internal/installer"
 	"github.com/yorth21/pcs/internal/registry"
 )
 
 // Env provides injectable I/O and environment boundaries for CLI execution.
 type Env struct {
+	Stdin           io.Reader
 	Stdout          io.Writer
 	Stderr          io.Writer
 	HomeDir         string
@@ -35,6 +38,9 @@ func Run(args []string, env Env) int {
 	}
 	if env.Stderr == nil {
 		env.Stderr = os.Stderr
+	}
+	if env.Stdin == nil {
+		env.Stdin = os.Stdin
 	}
 	if len(args) == 0 {
 		printUsage(env.Stdout)
@@ -66,6 +72,8 @@ func Run(args []string, env Env) int {
 		return runCodeGraph(rest, env)
 	case "flow":
 		return flow.RunCLI(rest, env.Stdout, env.Stderr, env.WorkDir)
+	case "hook":
+		return runHook(rest, env)
 	default:
 		fmt.Fprintf(env.Stderr, "pcs: unknown command %q\n\n", sub)
 		printUsage(env.Stderr)
@@ -528,6 +536,14 @@ func runSkillRegistry(args []string, env Env) int {
 	return 0
 }
 
+func runHook(args []string, env Env) int {
+	if len(args) != 1 || !slices.Contains(hook.Events, args[0]) {
+		fmt.Fprintf(env.Stderr, "usage: pcs hook %s  (reads the Claude Code hook JSON from stdin)\n", strings.Join(hook.Events, "|"))
+		return 2
+	}
+	return hook.Run(args[0], env.Stdin, env.Stdout)
+}
+
 func runCodeGraph(args []string, env Env) int {
 	if len(args) == 0 || args[0] != "init" {
 		fmt.Fprintf(env.Stderr, "usage: pcs codegraph init [--cwd <dir>] [--json]\n")
@@ -730,6 +746,8 @@ Commands:
   codegraph init           Validate project root and initialize CodeGraph index (.codegraph/)
   flow <subcommand>        Deterministic PCD flow state: start, status, next, record, close
                            (state in <project>/.pcs/flows/<feature>.json)
+  hook <event>             Claude Code hook entry point: pre-tool-use, subagent-stop, stop,
+                           user-prompt-submit (installed by default in profile scope)
   version                  Print pcs CLI version
   help                     Show this help message
 

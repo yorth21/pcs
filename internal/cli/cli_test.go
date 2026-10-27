@@ -323,3 +323,33 @@ func TestVersionJSONIncludesBuildMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIFlowAndHookRouting(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	env := Env{Stdout: &out, Stderr: &errb, WorkDir: root}
+	if code := Run([]string{"flow", "start", "--feature", "demo", "--kind", "audit", "--json"}, env); code != 0 {
+		t.Fatalf("flow start = %d: %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), `"pcs-explorer"`) {
+		t.Fatalf("flow start output = %s", out.String())
+	}
+	out.Reset()
+	payload, _ := json.Marshal(map[string]any{
+		"cwd": root, "hook_event_name": "PreToolUse", "tool_name": "Grep",
+		"tool_input": map[string]any{"pattern": "x", "path": "src"},
+	})
+	env.Stdin = bytes.NewReader(payload)
+	if code := Run([]string{"hook", "pre-tool-use"}, env); code != 0 {
+		t.Fatalf("hook exit = %d", code)
+	}
+	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
+		t.Fatalf("hook output = %s", out.String())
+	}
+	if code := Run([]string{"hook", "unknown"}, env); code != 2 {
+		t.Fatalf("unknown hook event exit = %d", code)
+	}
+}
