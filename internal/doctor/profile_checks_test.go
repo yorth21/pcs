@@ -70,8 +70,21 @@ func TestDoctorProfilePluginsCheck(t *testing.T) {
 		if !ok || c.Status != "warn" {
 			t.Fatalf("plugin check = %+v (found %v), want warn", c, ok)
 		}
-		if !strings.Contains(c.Detail, "claude plugin install engram@engram") {
-			t.Errorf("plugin check lacks the fix command: %q", c.Detail)
+		if !strings.Contains(c.Detail, "CLAUDE_CONFIG_DIR="+"'"+target+"' claude plugin install engram@engram") {
+			t.Errorf("plugin check lacks the scoped fix command: %q", c.Detail)
+		}
+	})
+	t.Run("windows plugin hint scopes CLAUDE_CONFIG_DIR to a restoring block", func(t *testing.T) {
+		home := isolateDoctorEnv(t)
+		target := installProfile(t, home, true)
+		c, ok := findCheck(t, runProfileDoctor(t, home, target, "windows"), "profile", "plugin:engram@engram")
+		if !ok || c.Status != "warn" {
+			t.Fatalf("plugin check = %+v (found %v), want warn", c, ok)
+		}
+		for _, w := range []string{"& { $prev = $env:CLAUDE_CONFIG_DIR;", "finally { $env:CLAUDE_CONFIG_DIR = $prev } }", `cmd /s /c "set "CLAUDE_CONFIG_DIR=`} {
+			if !strings.Contains(c.Detail, w) {
+				t.Errorf("windows plugin check lacks %q: %q", w, c.Detail)
+			}
 		}
 	})
 	t.Run("requested plugin enabled passes", func(t *testing.T) {

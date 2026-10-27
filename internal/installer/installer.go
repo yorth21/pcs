@@ -917,7 +917,7 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		report.LauncherDir = layout.userBinDir
 		report.LauncherOnPath = isDirOnPath(layout.userBinDir)
 
-		report.LauncherCmd = launcherCommand(runtime.GOOS, layout.targetDir, layout.sharedMCPPath)
+		report.LauncherCmd = launchHint(runtime.GOOS, layout.userBinDir, report.LauncherOnPath)
 		report.NextSteps = append(report.NextSteps,
 			profileNextSteps(runtime.GOOS, layout.targetDir, layout.userBinDir, report.LauncherOnPath, opts.WithPlugins)...)
 	}

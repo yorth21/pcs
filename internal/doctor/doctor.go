@@ -243,8 +243,8 @@ func Run(opts Options) (*DiagnosticReport, error) {
 				case enabled:
 					addCheck("profile", name, "ok", "enabled in profile settings.json")
 				default:
-					addCheck("profile", name, "warn", fmt.Sprintf("not enabled in %s. Run 'pcs sync --scope profile --with-plugins', or 'claude plugin marketplace add %s' and then 'claude plugin install %s' with CLAUDE_CONFIG_DIR set to %s",
-						status.SettingsJSONPath, installer.EngramMarketplaceSource, installer.EngramPlugin, targetDir))
+					addCheck("profile", name, "warn", fmt.Sprintf("not enabled in %s. Run 'pcs sync --scope profile --with-plugins', or run: %s",
+						status.SettingsJSONPath, installer.PluginInstallCommand(goos, targetDir)))
 				}
 			}
 

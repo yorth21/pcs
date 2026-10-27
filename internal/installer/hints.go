@@ -66,22 +66,55 @@ func installRequiredPlugins(goos, profileDir string) []string {
 	return failures
 }
 
-// profileClaudeCommand renders a copy-pasteable command that runs claude with
-// args and CLAUDE_CONFIG_DIR set to profileDir, in goos's default shell
-// (PowerShell on Windows, POSIX sh elsewhere). args must be shell-safe words.
-func profileClaudeCommand(goos, profileDir string, args []string) string {
-	if goos == "windows" {
-		return fmt.Sprintf("$env:CLAUDE_CONFIG_DIR = %s; claude %s", powerShellQuote(profileDir), strings.Join(args, " "))
+// profileClaudeCommand renders one copy-pasteable command line that runs claude
+// once per args list (in order) with CLAUDE_CONFIG_DIR scoped to profileDir, so
+// the variable never stays set in the caller's shell. Every args list must hold
+// shell-safe words.
+//
+//   - POSIX sh: each command gets its own CLAUDE_CONFIG_DIR='...' prefix.
+//   - Windows: a PowerShell block that restores the previous value in finally,
+//     plus the cmd.exe equivalent running in a cmd /s /c child process. The
+//     quoted set "VAR=value" form keeps trailing spaces out of the value;
+//     Windows paths cannot contain the double quote that would end it.
+func profileClaudeCommand(goos, profileDir string, steps ...[]string) string {
+	cmds := make([]string, len(steps))
+	for i, args := range steps {
+		cmds[i] = "claude " + strings.Join(args, " ")
 	}
-	return fmt.Sprintf("CLAUDE_CONFIG_DIR=%s claude %s", posixQuote(profileDir), strings.Join(args, " "))
+	if goos == "windows" {
+		powerShell := fmt.Sprintf("& { $prev = $env:CLAUDE_CONFIG_DIR; $env:CLAUDE_CONFIG_DIR = %s; try { %s } finally { $env:CLAUDE_CONFIG_DIR = $prev } }",
+			powerShellQuote(profileDir), strings.Join(cmds, "; "))
+		cmdExe := fmt.Sprintf(`cmd /s /c "set "CLAUDE_CONFIG_DIR=%s" && %s"`, profileDir, strings.Join(cmds, " & "))
+		return "PowerShell: " + powerShell + ", or cmd.exe: " + cmdExe
+	}
+	prefixed := make([]string, len(cmds))
+	for i, c := range cmds {
+		prefixed[i] = "CLAUDE_CONFIG_DIR=" + posixQuote(profileDir) + " " + c
+	}
+	return strings.Join(prefixed, "; ")
 }
 
-// launcherCommand renders the manual equivalent of the claude-pcs launcher.
-func launcherCommand(goos, profileDir, sharedMCPPath string) string {
-	if goos == "windows" {
-		return fmt.Sprintf("$env:CLAUDE_CONFIG_DIR=%s; claude --mcp-config %s", powerShellQuote(profileDir), powerShellQuote(sharedMCPPath))
+// PluginInstallCommand renders the manual command, in goos's shell syntax,
+// that installs the required plugins into the profile at profileDir without
+// leaving CLAUDE_CONFIG_DIR set in the caller's shell.
+func PluginInstallCommand(goos, profileDir string) string {
+	return profileClaudeCommand(goos, profileDir, requiredPluginSteps()...)
+}
+
+// launchHint returns the command that starts an isolated profile session: the
+// claude-pcs launcher itself, which scopes CLAUDE_CONFIG_DIR and passes the
+// stored launcher arguments and shared-mcp.json. When launcherDir is not on
+// PATH it is the launcher's absolute path, quoted for goos's default shell
+// (on Windows, PowerShell running the cmd launcher, which no execution policy
+// blocks).
+func launchHint(goos, launcherDir string, onPath bool) string {
+	if onPath || launcherDir == "" {
+		return "claude-pcs"
 	}
-	return fmt.Sprintf("CLAUDE_CONFIG_DIR=%s claude --mcp-config %s", posixQuote(profileDir), posixQuote(sharedMCPPath))
+	if goos == "windows" {
+		return "& " + powerShellQuote(strings.TrimRight(launcherDir, `\/`)+`\claude-pcs.cmd`)
+	}
+	return posixQuote(strings.TrimRight(launcherDir, "/") + "/claude-pcs")
 }
 
 // pathHint returns the instruction that puts dir on PATH. On Windows it appends
@@ -99,11 +132,7 @@ func pathHint(goos, dir string) string {
 func profileNextSteps(goos, profileDir, launcherDir string, launcherOnPath, withPlugins bool) []string {
 	steps := []string{"Profile ready! Run 'claude-pcs' and type '/login' to authenticate this profile."}
 	if !withPlugins {
-		var cmds []string
-		for _, args := range requiredPluginSteps() {
-			cmds = append(cmds, profileClaudeCommand(goos, profileDir, args))
-		}
-		steps = append(steps, "To install plugins into this profile, re-run 'pcs sync' with --with-plugins, or run: "+strings.Join(cmds, " ; then "))
+		steps = append(steps, "To install plugins into this profile, re-run 'pcs sync' with --with-plugins, or run: "+PluginInstallCommand(goos, profileDir))
 	}
 	if !launcherOnPath {
 		steps = append(steps, pathHint(goos, launcherDir))
