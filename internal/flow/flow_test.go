@@ -114,11 +114,11 @@ func TestStoreLifecycle(t *testing.T) {
 	if _, err := s.Start("other", KindT2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Close(true, "user cancelled"); err != nil {
+	if _, err := s.Close(true, "user cancelled the audit"); err != nil {
 		t.Fatal(err)
 	}
 	closed, err := s.Load("other")
-	if err != nil || closed.AbandonedReason != "user cancelled" || closed.ClosedAt == "" {
+	if err != nil || closed.AbandonedReason != "user cancelled the audit" || closed.ClosedAt == "" {
 		t.Fatalf("abandoned flow = %+v, %v", closed, err)
 	}
 }
@@ -179,7 +179,7 @@ func TestRunCLI(t *testing.T) {
 	if code, _, errs := run("close"); code != 1 || !strings.Contains(errs, "pending audit") {
 		t.Fatalf("close incomplete: %d %s", code, errs)
 	}
-	if code, out, _ := run("close", "--abandon", "--reason", "user cancelled", "--json"); code != 0 || !strings.Contains(out, "abandoned demo") {
+	if code, out, _ := run("close", "--abandon", "--reason", "user cancelled the audit", "--json"); code != 0 || !strings.Contains(out, "abandoned demo") {
 		t.Fatalf("abandon: %d %s", code, out)
 	}
 	if code, _, errs := run("close"); code != 1 || !strings.Contains(errs, "pcs flow start") {

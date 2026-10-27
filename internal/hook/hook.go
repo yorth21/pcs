@@ -35,6 +35,8 @@ type Input struct {
 	StopHookActive      bool           `json:"stop_hook_active"`
 	AgentTranscriptPath string         `json:"agent_transcript_path"`
 	Prompt              string         `json:"prompt"`
+	// LastAssistantMessage is the final text of the subagent (SubagentStop).
+	LastAssistantMessage string `json:"last_assistant_message"`
 }
 
 // Run executes the hook for event. It always returns 0: denials and blocks are
@@ -142,6 +144,9 @@ func preToolUse(store flow.Store, in Input) (any, error) {
 		return gateRead(store, in.ToolName+" on "+relDisplay(store.Root, path))
 	case "Bash":
 		cmd, _ := in.ToolInput["command"].(string)
+		if FlowRecordCommand(cmd) {
+			return deny(ManualRecordReason), nil
+		}
 		if BashAllowed(cmd) {
 			return nil, nil
 		}
@@ -371,33 +376,53 @@ func subagentStop(store flow.Store, in Input) error {
 	if idx < 0 {
 		return nil
 	}
-	envelope := EnvelopeStatus(in.AgentTranscriptPath)
-	status := flow.StatusUnverified
-	switch envelope {
-	case "done", "success", "partial":
-		status = flow.StatusDone
-	case "blocked":
-		status = flow.StatusBlocked
+	envelope := ParseEnvelopeStatus(in.LastAssistantMessage)
+	if envelope == "" {
+		envelope = EnvelopeStatus(in.AgentTranscriptPath)
 	}
-	_, err = store.Record(f.Phases[idx].Name, status, in.AgentID, envelope, flow.SourceHook)
+	phase := f.Phases[idx].Name
+	status, note := flow.StatusFromEnvelope(phase, envelope)
+	_, err = store.RecordRun(phase, flow.Run{
+		AgentID: in.AgentID, AgentType: in.AgentType, Status: status,
+		EnvelopeStatus: envelope, Source: flow.SourceHook, Note: note,
+	})
 	return err
 }
 
-var envelopeStatusPattern = regexp.MustCompile(`(?im)^[\s>*_-]*status[\s*_]*:[\s*_` + "`" + `]*([a-z]+)`)
+// envelopeStatusPattern matches a Return Envelope status line anywhere in the
+// text: an optional blockquote or list bullet, optional markdown emphasis
+// around the key and the value, then one of the known statuses, e.g.
+// "**Status**: success", "- **Status:** partial", "Status: blocked", or
+// "**Status**: **success**".
+var envelopeStatusPattern = regexp.MustCompile("(?im)^[ \t>]*(?:[-*+][ \t]+)?[*_`]{0,3}status[*_`]{0,3}[ \t]*:[ \t]*[*_`]{0,3}[ \t]*(success|partial|blocked|done)(?:[^a-z0-9]|$)")
 
-// EnvelopeStatus returns the lowercase Return Envelope status of the last
-// assistant text message in the JSONL transcript at path, or "" when the
-// transcript or the status line is missing.
-func EnvelopeStatus(path string) string {
-	text := lastAssistantText(path)
-	if text == "" {
-		return ""
-	}
+// ParseEnvelopeStatus returns the lowercase status of the last Return
+// Envelope status line in text, or "" when there is none.
+func ParseEnvelopeStatus(text string) string {
 	matches := envelopeStatusPattern.FindAllStringSubmatch(text, -1)
 	if len(matches) == 0 {
 		return ""
 	}
 	return strings.ToLower(matches[len(matches)-1][1])
+}
+
+// EnvelopeStatus returns the Return Envelope status of the last assistant
+// text message in the JSONL transcript at path, or "" when the transcript or
+// the status line is missing.
+func EnvelopeStatus(path string) string {
+	return ParseEnvelopeStatus(lastAssistantText(path))
+}
+
+// ManualRecordReason is the denial reason for main-thread `pcs flow record`.
+const ManualRecordReason = "Phase completion is recorded by the SubagentStop hook from the subagent Return Envelope. If it was not recorded, relaunch the agent so it ends with `**Status**: success|partial|blocked`. A human can run pcs flow record in their own terminal."
+
+// flowRecordPattern finds a pcs binary (any path, optionally quoted, with or
+// without .exe) invoked with `flow record`, also inside `sh -c "..."` strings.
+var flowRecordPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9_.-])pcs(?:\.exe)?['"]?\s+flow\s+record(?:\s|$|['";|&])`)
+
+// FlowRecordCommand reports whether command runs `pcs flow record`.
+func FlowRecordCommand(command string) bool {
+	return flowRecordPattern.MatchString(command)
 }
 
 func lastAssistantText(path string) string {

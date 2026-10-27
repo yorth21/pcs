@@ -82,6 +82,47 @@ type Phase struct {
 	RecordedAt     string   `json:"recorded_at,omitempty"`
 	EnvelopeStatus string   `json:"envelope_status,omitempty"`
 	Source         string   `json:"source,omitempty"`
+	Note           string   `json:"note,omitempty"`
+	// Runs lists every recorded result for this phase in order, so duplicate
+	// or failed subagent runs stay visible after the phase is done.
+	Runs []Run `json:"runs,omitempty"`
+}
+
+// Run is one recorded result for a phase.
+type Run struct {
+	AgentID        string `json:"agent_id,omitempty"`
+	AgentType      string `json:"agent_type,omitempty"`
+	Status         string `json:"status"`
+	EnvelopeStatus string `json:"envelope_status,omitempty"`
+	Source         string `json:"source,omitempty"`
+	Note           string `json:"note,omitempty"`
+	RecordedAt     string `json:"recorded_at"`
+}
+
+// PhaseVerify is the build-flow phase whose Severity 3-4 hard gate requires a
+// clean Return Envelope.
+const PhaseVerify = "verify"
+
+// VerifyPartialNote explains why a partial verify result blocks the phase.
+const VerifyPartialNote = "verify requires Return Envelope status success; partial means unresolved findings (Severity 3-4 hard gate). Fix them and relaunch the verifier."
+
+// StatusFromEnvelope maps a Return Envelope status to the phase status it
+// earns for phase, with a note when the mapping needs explanation. verify is
+// done only on success (or the legacy done); every other phase accepts
+// success, partial, or done.
+func StatusFromEnvelope(phase, envelope string) (status, note string) {
+	switch envelope {
+	case "success", "done":
+		return StatusDone, ""
+	case "partial":
+		if phase == PhaseVerify {
+			return StatusBlocked, VerifyPartialNote
+		}
+		return StatusDone, ""
+	case "blocked":
+		return StatusBlocked, ""
+	}
+	return StatusUnverified, ""
 }
 
 // Flow is the persisted state of one feature flow.
@@ -209,6 +250,23 @@ func (f *Flow) Pending() []string {
 // Complete reports whether every mandatory phase is done.
 func (f *Flow) Complete() bool { return len(f.Pending()) == 0 }
 
+// UnverifiedRunInstruction is the duplicate-run guard appended to a delegate
+// instruction when a previous run of agent ended without a status line.
+func UnverifiedRunInstruction(agent string) string {
+	return fmt.Sprintf("The previous %s run ended without a Return Envelope Status line; relaunch it and require the final `**Status**:` line.", agent)
+}
+
+// lastUnverifiedAgent reports whether any recorded run of p was unverified and
+// returns the agent type of the latest such run (possibly empty).
+func (p Phase) lastUnverifiedAgent() (string, bool) {
+	for i := len(p.Runs) - 1; i >= 0; i-- {
+		if p.Runs[i].Status == StatusUnverified {
+			return p.Runs[i].AgentType, true
+		}
+	}
+	return "", false
+}
+
 // NoFlowTransition is the transition returned when no flow is active.
 func NoFlowTransition() Transition {
 	return Transition{
@@ -239,9 +297,17 @@ func (f *Flow) Next() Transition {
 		case StatusBlocked:
 			instr = fmt.Sprintf("Phase %s is blocked (Return Envelope status %q). Resolve the blocker, then re-delegate to subagent %s%s for feature %s, or ask the user and run %s if they cancel.",
 				p.Name, p.EnvelopeStatus, agent, alt, f.Feature, AbandonCommand)
+			if p.Note != "" {
+				instr += " Note: " + p.Note
+			}
 		case StatusUnverified:
-			instr = fmt.Sprintf("Phase %s is unverified: subagent %s returned no Return Envelope status. Re-delegate to subagent %s%s for feature %s and require the Return Envelope.",
-				p.Name, agent, agent, alt, f.Feature)
+			instr = fmt.Sprintf("Phase %s is unverified (feature %s, subagent_type %q).", p.Name, f.Feature, agent)
+		}
+		if unverified, ok := p.lastUnverifiedAgent(); ok || p.Status == StatusUnverified {
+			if unverified == "" {
+				unverified = agent
+			}
+			instr += " " + UnverifiedRunInstruction(unverified)
 		}
 		return Transition{Schema: TransitionSchema, Kind: TransitionDelegate, Phase: p.Name, Agent: agent, Instruction: instr}
 	}
@@ -337,6 +403,9 @@ func (s Store) Start(feature, kind string) (*Flow, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.ensureGitignore(); err != nil {
+		return nil, err
+	}
 	if err := s.Save(f); err != nil {
 		return nil, err
 	}
@@ -346,8 +415,27 @@ func (s Store) Start(feature, kind string) (*Flow, error) {
 	return f, nil
 }
 
-// Record sets the status of phase on the active flow.
+// ensureGitignore writes <root>/.pcs/.gitignore with "*" when it is missing,
+// so local flow state and Playwright artifacts never reach version control.
+func (s Store) ensureGitignore() error {
+	path := filepath.Join(s.dir(), ".gitignore")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return writeAtomic(path, []byte("*\n"))
+}
+
+// Record sets the status of phase on the active flow (see RecordRun).
 func (s Store) Record(phase, status, agentID, envelopeStatus, source string) (*Flow, error) {
+	return s.RecordRun(phase, Run{AgentID: agentID, Status: status, EnvelopeStatus: envelopeStatus, Source: source})
+}
+
+// RecordRun appends run to phase on the active flow and updates the phase
+// status monotonically: a done phase never goes back to blocked or
+// unverified, while a blocked or unverified phase can still become done.
+func (s Store) RecordRun(phase string, run Run) (*Flow, error) {
 	f, err := s.Active()
 	if err != nil {
 		return nil, err
@@ -363,22 +451,32 @@ func (s Store) Record(phase, status, agentID, envelopeStatus, source string) (*F
 		}
 		return nil, fmt.Errorf("flow %s (%s) has no phase %q (phases: %s)", f.Feature, f.Kind, phase, strings.Join(names, ", "))
 	}
-	switch status {
+	switch run.Status {
 	case StatusDone, StatusBlocked, StatusUnverified:
 	default:
-		return nil, fmt.Errorf("invalid phase status %q", status)
+		return nil, fmt.Errorf("invalid phase status %q", run.Status)
 	}
+	run.RecordedAt = Now().Format(time.RFC3339)
 	p := &f.Phases[idx]
-	p.Status = status
-	p.AgentID = agentID
-	p.EnvelopeStatus = envelopeStatus
-	p.Source = source
-	p.RecordedAt = Now().Format(time.RFC3339)
+	p.Runs = append(p.Runs, run)
+	if p.Status == StatusDone && run.Status != StatusDone {
+		return f, s.Save(f)
+	}
+	p.Status = run.Status
+	p.AgentID = run.AgentID
+	p.EnvelopeStatus = run.EnvelopeStatus
+	p.Source = run.Source
+	p.Note = run.Note
+	p.RecordedAt = run.RecordedAt
 	return f, s.Save(f)
 }
 
+// MinAbandonReason is the minimum length of an --abandon reason, so an
+// abandonment always carries an explanation a reviewer can check.
+const MinAbandonReason = 15
+
 // Close closes the active flow. An incomplete flow closes only when abandon is
-// true with a non-empty reason.
+// true with a reason of at least MinAbandonReason characters.
 func (s Store) Close(abandon bool, reason string) (*Flow, error) {
 	f, err := s.Active()
 	if err != nil {
@@ -389,8 +487,8 @@ func (s Store) Close(abandon bool, reason string) (*Flow, error) {
 	}
 	reason = strings.TrimSpace(reason)
 	if abandon {
-		if reason == "" {
-			return nil, errors.New("--abandon requires a non-empty --reason")
+		if len([]rune(reason)) < MinAbandonReason {
+			return nil, fmt.Errorf("--abandon requires a --reason of at least %d characters stating the user cancellation", MinAbandonReason)
 		}
 		f.AbandonedReason = reason
 	} else if pending := f.Pending(); len(pending) > 0 {
