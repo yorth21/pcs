@@ -1,58 +1,57 @@
 ---
 name: pcs-core
-description: "Trigger: UX design, new feature, screen flow, wireframe, usability audit, empty states, PCD planes. Apply technology-agnostic 5-Plane UX rules."
+description: "Trigger: UX design, new feature, screen flow, usability audit, empty states, PCD planes. Apply technology-agnostic 5-Plane UX rules and verification."
 license: Apache-2.0
 metadata:
   author: yorth21
-  version: "1.0"
+  version: "1.1"
 ---
 
 ## Activation Contract
 
-Load when planning, specifying, building, or auditing any product feature, user flow, container choice, or UI surface across the 5 Planes of Product-Centered Development (PCD).
+Load when planning, specifying, building, or auditing any product feature, user flow, container choice, or UI surface across the 5 Planes of Product-Centered Development (PCD). For SaaS screens, load together with `pcs-saas` (page catalog and Page Composition Spec) and the active Stack Adapter.
 
 Do not load for non-interactive backend scripts or database-only migrations.
 
 ## Hard Rules
 
-- Never write Plane 5 (`Surface`) code for `Tier 2` or `Tier 3` features before Planes 1–4 are documented in `pcs/specs/<feature-name>.md` and tracked in `pcs/tasks/<feature-name>.md`.
-- Never cite external product companies as design shorthand; apply the cognitive laws, matrices, and token rules in `references/`.
-- Map domain entities with the **OOUX ORCA Matrix** (Objects, Relationships, CTAs, Attributes) before defining screens.
-- Specify the Happy Path plus all **5 Mandatory Negative States**: `Zero-Data`, `No-Results` (filtered empty), `Contextual Loading`, `Partial Error`, and `Inline Validation Error`.
-- Choose containers (`Inline`, `Dialog`, `Sheet`, `Full Page`) by **Context Dependency** and **Cognitive Load** first, never field count alone.
-- Scale friction to risk: optimistic Undo toast for reversible actions; explicit `<AlertDialog>` naming consequences for destructive actions.
-- Enforce the **60-30-10 color budget**, **3-level typography**, **>= 25% whitespace floor**, and **0 Severity 3–4 heuristic blockers**.
+- Never write Plane 5 (`Surface`) code for `Tier 2` or `Tier 3` features before Planes 1–2 and the Page Composition Spec (Planes 3–4, `pcs-saas` `04` §4) are in `pcs/specs/<feature-name>.md` and tasks are in `pcs/tasks/<feature-name>.md`.
+- Never cite external product companies as design shorthand; apply the laws, matrices, and rules in `references/`.
+- Map domain objects with the **OOUX ORCA Matrix** (Objects, Relationships, CTAs with risk tier, Attributes) before choosing a page.
+- Record only what changes the page: role, jobs, objects, cardinality, frequency, risk, scope slice. Declared Assumptions only when they drive a design decision. KLM budgets and outcome metrics are optional.
+- Every data region declares the full state matrix (`S1`–`S7` of `pcs-saas`), a superset of the **5 Mandatory Negative States**.
+- Choose containers by **Context Dependency** and **Cognitive Load**, never field count alone; scale friction to risk.
+- Cognitive laws and heuristics are verified on the rendered UI with observations, never declared as compliant in the spec.
+- Zero Severity `3–4` findings at build closure.
 
 ## Decision Gates
 
 | Decision Fork | Action | Reference |
 |---------------|--------|-----------|
-| Ambiguous user role or task cadence | Ask at most 1 blocking question or log a Declared Assumption | `references/01-planes-strategy-and-scope.md` |
-| Selecting `Inline` vs `Dialog` vs `Sheet` vs `Page` | Evaluate background context dependency and cognitive load | `references/02-planes-structure-and-skeleton.md` |
-| Reversible vs destructive mutation | Use immediate Undo toast vs consequence `AlertDialog` | `references/02-planes-structure-and-skeleton.md` |
-| Visual hierarchy, whitespace, or numeric data | Apply 60-30-10 budget, 3-level type, and `tabular-nums` | `references/03-plane-surface-and-visual-hierarchy.md` |
-| Post-build usability & accessibility audit | Score 10 Heuristics (`0–4`) and 4-Question Walkthrough | `references/04-heuristic-and-walkthrough-verification.md` |
+| Ambiguous role, job, or volume | Use the intake answer, else log a decision-driving Declared Assumption | `references/01-planes-strategy-and-scope.md` |
+| Template, organisms, state matrix | Write the Page Composition Spec | `pcs-saas` `references/04-template-decision-tree.md` |
+| `Inline` vs `Dialog` vs `Sheet` vs `Page`; friction | Context dependency, cognitive load, risk tier | `references/02-planes-structure-and-skeleton.md` |
+| Visual hierarchy or numeric data | Apply surface rules | `references/03-plane-surface-and-visual-hierarchy.md` |
+| Post-build or audit verification | Contract checks, forced states, heuristics, laws on rendered UI | `references/04-heuristic-and-walkthrough-verification.md` |
 
 ## Execution Steps
 
-1. Load `references/01-planes-strategy-and-scope.md` to define Role Profile, JTBD, Declared Assumptions, OOUX ORCA, and HTA/KLM step budget.
-2. Load `references/02-planes-structure-and-skeleton.md` to define IA (<= 2 levels), 5 Negative States, Container Matrix, Friction Matrix, and Wireframe.
-3. Write `pcs/specs/<feature-name>.md` (`assets/ux-spec-template.md`) and `pcs/tasks/<feature-name>.md` (`assets/ux-tasks-template.md`).
-4. Load `references/03-plane-surface-and-visual-hierarchy.md` alongside the Stack Adapter during Plane 5 build.
-5. Load `references/04-heuristic-and-walkthrough-verification.md` to verify 0 Severity `3–4` blockers.
+1. Strategy: apply `references/01-planes-strategy-and-scope.md` and write spec §1–2 (`assets/ux-spec-template.md`).
+2. Compose: apply `references/02-planes-structure-and-skeleton.md` and `pcs-saas`; write spec §3 (Page Composition) and `pcs/tasks/<feature-name>.md` (`assets/ux-tasks-template.md`).
+3. Build: apply `references/03-plane-surface-and-visual-hierarchy.md` with the Stack Adapter.
+4. Verify: apply `references/04-heuristic-and-walkthrough-verification.md`; write spec §6 (Verification Report).
 
 ## Output Contract
 
 Return:
-- Completed 5-Plane specification in `pcs/specs/<feature-name>.md` and work units in `pcs/tasks/<feature-name>.md`.
-- Container and friction choices justified by cognitive laws.
-- Verification scorecard across the 10 Heuristics (`0–4`), 4-Question Walkthrough, and 5 Negative States.
+- `pcs/specs/<feature-name>.md` with Planes 1–2, the Page Composition Spec, and the Verification Report; work units in `pcs/tasks/<feature-name>.md`.
+- Fix-ready findings (ID, severity `0–4`, evidence, location, expected vs actual, fix) and zero Severity `3–4` at closure.
 
 ## References
 
-- `references/01-planes-strategy-and-scope.md` — Strategy (Role, JTBD) and Scope (OOUX ORCA, HTA/KLM).
-- `references/02-planes-structure-and-skeleton.md` — Structure (IA, 5 Negative States) and Skeleton (Containers, Friction, Laws).
-- `references/03-plane-surface-and-visual-hierarchy.md` — Surface (60-30-10 color, 3-level type, scanning, `tabular-nums`).
-- `references/04-heuristic-and-walkthrough-verification.md` — 10 Heuristics (`0–4`), 4-Question Walkthrough, WCAG 2.2 AA.
+- `references/01-planes-strategy-and-scope.md` — Strategy (role, jobs) and Scope (ORCA, classification inputs, slice).
+- `references/02-planes-structure-and-skeleton.md` — Structure and Skeleton rules behind the Page Composition Spec.
+- `references/03-plane-surface-and-visual-hierarchy.md` — Surface hierarchy, color budget, type, numeric display.
+- `references/04-heuristic-and-walkthrough-verification.md` — Contract verification, forced states, heuristics, laws, finding format.
 - `assets/ux-spec-template.md` — Template for `pcs/specs/<feature-name>.md`.
 - `assets/ux-tasks-template.md` — Template for `pcs/tasks/<feature-name>.md`.

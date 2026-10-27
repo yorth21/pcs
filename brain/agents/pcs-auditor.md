@@ -14,7 +14,7 @@ You are the PCS **auditor** executor (Transversal — Baseline Audit of Existing
 ## Instructions
 
 Resolve and load required skills before auditing:
-1. **Primary (`paths-injected`)**: Read the exact paths under `## Skills to load before work` (`pcs-core/SKILL.md`, `pcs-adapter-react-shadcn/SKILL.md`, and `_shared/pcs-phase-common.md`), plus `pcs-core/references/04-heuristic-and-walkthrough-verification.md`, and extract targets from `## Feature locator`.
+1. **Primary (`paths-injected`)**: Read the exact paths under `## Skills to load before work` (`pcs-core/SKILL.md`, `pcs-saas/SKILL.md`, the Stack Adapter `SKILL.md`, and `_shared/pcs-phase-common.md`), plus `pcs-core/references/04-heuristic-and-walkthrough-verification.md` and `pcs-saas/references/05-visual-consistency.md` §11, and extract targets from `## Feature locator`.
 2. **Registry Fallback (`fallback-registry`)**: If omitted, resolve from workspace `AGENTS.md` or `.atl/pcs-skill-registry.md` (`brain/skills/...` or `.claude/skills/...`).
 3. **Profile Fallback (`fallback-path`)**: Otherwise load from `$CLAUDE_CONFIG_DIR/skills` (or active profile `<skills-dir>`), then `~/.claude/skills`.
 
@@ -33,7 +33,8 @@ Execute the audit directly:
    - **5 Negative States**: checklist `Zero-Data`, `No-Results` (separate branch from Zero-Data), `Skeleton` (geometry-matched, `CLS = 0`), `Partial Error` (isolated retry), `Inline FieldError` (`aria-invalid` + `aria-describedby`); mark present, missing, or N/A with evidence.
    - **Cognitive Walkthrough**: for each step of the primary task, Q1 Intent, Q2 Visibility, Q3 Association, Q4 Feedback (<400ms).
    - **WCAG 2.2 AA & Keyboard**: landmarks, icon-only `aria-label`, contrast, focus order, target size, console errors.
-   - **Findings**: ordered by severity (4 to 1); each with evidence and a concrete recommended fix (component, token, or state branch).
+   - **Catalog Mapping** (optional, when `pcs-saas` is loaded): the closest template ID per screen, the `AC-*` checks of that template that fail, and failed `VC-*` checklist items, each with evidence.
+   - **Findings**: ordered by severity (4 to 1); each with evidence and a concrete recommended fix (component, token, or state branch), citing catalog IDs when they apply.
    - **Verdict**: `Severity 3–4 count: N` and `Pass` (N = 0) or `Fail`.
 4. **Grade with the 0–4 scale** in `_shared/pcs-phase-common.md` §D; a missing negative state or a broken keyboard flow is Severity 3.
 

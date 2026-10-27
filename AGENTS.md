@@ -33,11 +33,11 @@ This file is the authoritative registry of orchestrator blocks, native subagents
 
 | Agent Name | PCD Plane / Role | Model | Write Access | Engram Topic Key | Exact Path |
 |------------|------------------|-------|--------------|------------------|------------|
-| `pcs-explorer` | Plane 0 — UX & Codebase Discovery | `sonnet` | Read-Only | `pcs/{feature-name}/explore` | `brain/agents/pcs-explorer.md` |
+| `pcs-explorer` | Plane 0 — UX & Codebase Discovery and UI Inventory | `sonnet` | `pcs/design/inventory.md` (build flows only) | `pcs/{feature-name}/explore` | `brain/agents/pcs-explorer.md` |
 | `pcs-strategist` | Planes 1 & 2 — Strategy & Scope | `opus` | `pcs/specs/{feature-name}.md` | `pcs/{feature-name}/strategy` | `brain/agents/pcs-strategist.md` |
-| `pcs-architect` | Planes 3 & 4 — Structure, Skeleton & Tasks | `opus` | `pcs/specs/{feature-name}.md`, `pcs/tasks/{feature-name}.md` | `pcs/{feature-name}/architecture`, `pcs/{feature-name}/tasks` | `brain/agents/pcs-architect.md` |
-| `pcs-builder` | Plane 5 — Surface & Component Composition | `sonnet` | Authorized `src/**`, `pcs/tasks/{feature-name}.md` | `pcs/{feature-name}/apply` | `brain/agents/pcs-builder.md` |
-| `pcs-verifier` | Transversal — Post-Build Heuristics, A11y & Playwright | `sonnet` | `pcs/specs/{feature-name}.md` (Verification Report) | `pcs/{feature-name}/verify` | `brain/agents/pcs-verifier.md` |
+| `pcs-architect` | Planes 3 & 4 — Page Composition Spec & Tasks (phase `compose`) | `opus` | `pcs/specs/{feature-name}.md`, `pcs/tasks/{feature-name}.md` | `pcs/{feature-name}/compose`, `pcs/{feature-name}/tasks` | `brain/agents/pcs-architect.md` |
+| `pcs-builder` | Plane 5 — Surface Build & Verify Fix Rounds | `sonnet` | Authorized `src/**`, `pcs/tasks/{feature-name}.md`, `pcs/design/inventory.md` | `pcs/{feature-name}/apply` | `brain/agents/pcs-builder.md` |
+| `pcs-verifier` | Transversal — Post-Build Page Composition Contract, States, A11y & Playwright | `sonnet` | `pcs/specs/{feature-name}.md` (Verification Report) | `pcs/{feature-name}/verify` | `brain/agents/pcs-verifier.md` |
 | `pcs-auditor` | Transversal — Baseline Audit of Existing UI (no spec) | `sonnet` | Read-Only (Coordinator persists `pcs/audits/{feature-name}.md`) | `pcs/{feature-name}/audit` | `brain/agents/pcs-auditor.md` |
 
 ---

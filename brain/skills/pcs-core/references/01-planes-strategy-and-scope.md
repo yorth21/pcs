@@ -1,99 +1,103 @@
 # Planes 1 & 2 — Product Strategy and Scope Specification
 
-This reference defines the mandatory engineering rules for **Plane 1 (Strategy)** and **Plane 2 (Scope)** in Product-Centered Development (PCD). Execute these steps before designing navigation trees, selecting containers, or writing UI code.
+This reference defines the rules for **Plane 1 (Strategy)** and **Plane 2 (Scope)** in Product-Centered Development (PCD). Its output is the input of the page composer: every item recorded here MUST change a page decision (template, container, friction, density, columns, or scope). Do not write sections that change nothing.
 
 ---
 
 ## 1. Plane 1: Product Strategy
 
-Plane 1 answers **Who is operating this interface, in what real-world environment, and what measurable outcome must they achieve?**
+Plane 1 answers **who operates this interface, in what environment, and which job the page must complete**.
 
-### 1.1 Goal-Directed Role & Environment Profiling
+### 1.1 Operational Role & Environment
 
-Never invent fictional demographic personas (e.g., age, hobbies, stock photos). Profile the **Operational Role** across four concrete engineering dimensions that directly govern layout density, control sizing, and interaction speed:
+Never invent demographic personas (age, hobbies, photos). Profile the **operational role** across the dimensions that govern layout density, control sizing, and interaction speed:
 
-| Dimension | Low-Intensity / Occasional Spectrum | High-Intensity / Daily Workbench Spectrum | Concrete UI Impact |
-|-----------|-------------------------------------|-------------------------------------------|--------------------|
-| **Frequency of Use** | Monthly or one-time setup (onboarding, billing config, role permissions) | 20–200+ executions per shift (triage queues, order reconciliation, scheduling) | Occasional -> guided step-by-step clarity, explicit descriptions. Daily -> compact density, keyboard shortcuts, inline edits, zero redundant confirmations. |
-| **Domain Expertise** | Novice or cross-functional viewer | Domain specialist (auditor, dispatcher, clinician, analyst) | Novice -> progressive disclosure, plain-language labels, contextual hints. Specialist -> high information scent, simultaneous multi-attribute visibility, rapid filtering. |
-| **Workspace Environment** | Quiet desktop office, large external monitor (`>= 1440px`) | Field tablet, shared terminal, multi-window split screen (`768px–1280px`), high interruption rate | High interruption -> persistent URL state, auto-saved drafts or dirty-close guards, clear visual resume cues. |
-| **Error Consequence** | Cosmetic or easily reversible (renaming a tag, toggling a view filter) | Financial, legal, clinical, or irreversible data mutation | High consequence -> explicit audit previews, Risk-Proportional Friction (`AlertDialog` with impact statement). |
+| Dimension | Occasional End | Daily Workbench End | Page Impact |
+|-----------|----------------|---------------------|-------------|
+| **Frequency of use** (`F`: `daily` \| `weekly` \| `rare`) | Monthly or one-time setup | 20–200+ executions per shift | Occasional -> guided clarity, explicit descriptions, comfortable density. Daily -> compact density, keyboard paths, inline edits, no redundant confirmations. |
+| **Domain expertise** | Novice or cross-functional viewer | Domain specialist | Novice -> progressive disclosure, plain labels, hints. Specialist -> many attributes visible, fast filtering. |
+| **Environment & viewport** | Desktop office, large monitor | Tablet, shared terminal, split screen, frequent interruptions | Interruptions -> URL state, drafts or dirty-close guards, visible resume cues. Small viewports -> mobile rules first. |
+| **Error consequence** | Cosmetic or reversible | Financial, legal, clinical, irreversible, or affects others | High consequence -> review before commit and risk-proportional friction. |
 
-### 1.2 Jobs-to-be-Done (JTBD) Formulation
+### 1.2 Jobs-to-be-Done (JTBD)
 
-Every feature specification MUST state the core Job-to-be-Done using the canonical causal formula:
+State one **primary job** with the canonical formula:
 
-> **When** `[specific triggering situation and operational constraint]`,
-> **I want to** `[core action/capability without prescribing UI mechanics]`,
-> **so I can** `[measurable user and business outcome]`.
+> **When** `[triggering situation and constraint]`,
+> **I want to** `[core action, without prescribing UI mechanics]`,
+> **so I can** `[user and business outcome]`.
 
-Break the JTBD outcomes into three mandatory dimensions:
+- The main verb of the "I want to" clause maps to the job type `J` of `pcs-saas` `references/04-template-decision-tree.md` §1 (`monitor`, `find`, `process`, `inspect`, `create`, `edit`, `configure`, `transfer`, `authenticate`, `onboard`, `recover`).
+- List **secondary jobs** (0–4) the same page must also serve, one line each with its job type. A secondary job either adds a region or action to the page or becomes a separate page; say which.
 
-1. **Functional Outcome**: What concrete task is completed faster, with fewer steps, or with zero manual cross-referencing?
-2. **Emotional Outcome**: How does the interface eliminate operator anxiety (e.g., confidence that filters are active, certainty about whether edits are saved, safety against accidental deletion)?
-3. **Social / Organizational Outcome**: How does the result make the operator's work auditable, transparent, and trustworthy to teammates or downstream consumers?
+### 1.3 Questions and Declared Assumptions
 
-### 1.3 Declared Assumptions Ledger
+- Ambiguities that change the design (user role, primary job, frequency, record volume) are asked once, in the coordinator's single intake round. Agents never ask the user directly.
+- Everything else becomes a **Declared Assumption** only when it drives a design decision. Each assumption names the decision or rule it drives and the risk if wrong:
 
-When requirements do not specify every operational detail:
-- If an ambiguity creates a **major architectural fork** (e.g., single-record approval vs. batch multi-record approval), stop and ask **at most ONE high-leverage question** using Lossless Blocking Prompts.
-- For bounded operational details, record each assumption in the **Declared Assumptions Ledger** with its risk if wrong and concrete validation method:
+| ID | Declared Assumption | Drives | Risk if Wrong |
+|----|---------------------|--------|---------------|
+| `A-01` | Operators process 15–50 records per session and return to the list after each record. | `N = many`, `F = daily` -> `T17` index table + `K03` sheet | High — a full-page record view would reset filters and scroll on every inspection. |
 
-| Assumption ID | Declared Assumption | Confidence (`High`/`Med`/`Low`) | Risk if Wrong & UX Impact | Validation Method |
-|---------------|---------------------|---------------------------------|---------------------------|-------------------|
-| `A-01` | Operators process 15–50 records per session and need persistent filter state across row inspections. | `High` | High — full-page navigation would wipe scroll/filter context on every edit; requires a contextual side `Sheet` + URL search params. | Inspect existing API pagination payloads and verify workflow with 3 sequential row edits. |
+### 1.4 Optional: Outcome Metrics
 
-### 1.4 Measurable Outcome Metrics
-
-Every Plane 1 Strategy section MUST define verifiable product and interaction outcome targets so Plane 2 Scope and Verification can test whether the design succeeded:
-
-| Metric Category | Engineering Target | Verification Mechanism |
-|-----------------|--------------------|------------------------|
-| **Interaction Cost (KLM Budget)** | `<= 3 clicks` for primary CRUD creation/edit; `1–2 clicks` for high-frequency status toggles | HTA/KLM step count in Plane 2 & Cognitive Walkthrough in Verification |
-| **Context Preservation** | `0` lost filter/scroll states when inspecting or editing collection records | URL search-param persistence + `Sheet` container verification |
-| **Error Recovery & Clarity** | `100%` of negative paths (`Zero-Data`, `No-Results`, `Loading`, `Partial Error`, `Validation Error`) have an explicit recovery CTA | Static & Playwright state-completeness audit (`0` Severity 3–4 issues) |
+Outcome metrics (interaction cost, context preservation, recovery rate) are optional. Add them only when the request or the team asks for measurable targets; never invent numeric targets to fill the section.
 
 ---
 
-## 2. Plane 2: Product Scope, OOUX & Task Budgeting
+## 2. Plane 2: Product Scope & OOUX
 
-Plane 2 translates Strategy into a **coherent domain model** and a **minimalist interaction budget**. It prevents two classic frontend failures: **scattered domain entities** (where the same object looks and behaves differently across screens) and **workflow bloat** (where a 2-click task takes 6 modals).
+Plane 2 translates the jobs into a **coherent object model** and a **bounded build slice**. It prevents scattered objects (the same object looking different across screens) and workflow bloat.
 
 ### 2.1 Object-Oriented UX (OOUX) — The ORCA Matrix
 
-Before sketching screens or pages, extract the **nouns** from the JTBD and map them in an **ORCA Matrix**:
+Extract the nouns from the jobs and map them before choosing any page:
 
-1. **O — Objects**: Core real-world domain entities in the user's mental model (e.g., `Invoice`, `DiscrepancyNote`, `PaymentBatch`). Limit a single feature workspace to **1 Primary Object** and at most **2–3 Secondary/Related Objects**.
-2. **R — Relationships**: Explicit cardinality between objects (`1:1`, `1:N`, `M:N`) and how the user traverses between them without losing context.
-3. **C — Calls-to-Action (CTAs)**: Every permitted verb on the object, classified by risk level (`Read/Inspect`, `Create`, `Update/Inline Toggle`, `Destructive/Irreversible`).
-4. **A — Attributes**: The exact data properties of each object, ranked strictly into four visual priority tiers:
-   - **Tier 1 (Identity)**: Unique human identifier (Name, Code, Reference ID) — always visible, left-aligned.
-   - **Tier 2 (State / Urgency)**: Lifecycle status or health indicator — rendered as a semantic badge or status dot.
-   - **Tier 3 (Quantitative / Temporal)**: Amounts, counts, timestamps — rendered with `tabular-nums`, right-aligned in tables.
-   - **Tier 4 (Secondary / Detail)**: Notes, audit logs, full descriptions — deferred to detail `Sheet` or expandable views (`Progressive Disclosure`).
+1. **O — Objects**: real domain objects in the user's mental model. One **primary object** per page and at most **3 related objects**.
+2. **R — Relationships**: cardinality (`1:1`, `1:N`, `M:N`) and how the user moves between related objects without losing context.
+3. **C — Calls-to-Action**: every verb on the object, the role allowed to perform it, and its **risk tier**:
+   - `A` — reversible (archive, toggle, reassign).
+   - `B` — unsaved-work loss (closing a modified form).
+   - `C` — destructive, irreversible, money movement, external send, or affects other users' data.
+4. **A — Attributes**: ranked into four display tiers:
+   - **T1 Identity**: human identifier (name, code, reference) — always visible, first column.
+   - **T2 State**: lifecycle status or health — status badge with text.
+   - **T3 Quantitative / Temporal**: amounts, counts, dates — formatted, tabular figures, right-aligned in tables.
+   - **T4 Detail**: notes, history, long text — deferred to detail views.
 
-#### OOUX Anti-Fragmentation Rule
-If the same domain Object appears in a summary card, a table row, and a detail panel, its **Tier 1 Identity** and **Tier 2 State Badge** MUST use identical terminology, status colors, and formatting across all three representations.
+**Anti-fragmentation rule**: when an object appears as a card, a row, and a detail view, its T1 identity and T2 status use identical wording, color role, and format in all three.
 
-### 2.2 Hierarchical Task Analysis (HTA) & Keystroke-Level Model (KLM) Budget
+### 2.2 Classification Inputs
 
-Decompose the primary user goal into sequential steps, compare the **Naive / Unpruned Baseline** against the **KISS-Pruned Budget** (clicks, keystrokes, and view transitions), and enforce a strict **Interaction Step Budget**:
+Fill the `pcs-saas` classification inputs from the ORCA matrix with one line of evidence each (explorer map, API contract, intake answer, or Declared Assumption ID). Unknown values take the default of `pcs-saas` `04` §1.
 
-| Task Frequency / Type | Unpruned Baseline Anti-Pattern | KISS-Pruned Target Budget | Maximum Container Transitions | KLM Optimization Rule |
-|-----------------------|--------------------------------|---------------------------|-------------------------------|-----------------------|
-| **High-Frequency Micro-Task** (status toggle, quick filter, single-field edit) | 4–5 clicks across a row menu + modal + `"Are you sure?"` dialog | **1–2 clicks** (or 1 keyboard shortcut) | `0` (Inline or Popover) | Never open a modal dialog for a binary toggle or single-select status change; use optimistic update + Undo toast. |
-| **Standard CRUD Creation / Edit** (3–10 attributes) | 6–8 clicks across a full page redirect + confirmation popup + manual back navigation | **3–5 clicks** + typing | `1` (`Dialog` or `Sheet`) | Pre-fill smart defaults (Tesler's Law); auto-focus the first input on open; submit on `Enter` / `Cmd+Enter`. |
-| **Complex Multi-Step Workflow** (reconciliation, bulk import, configuration) | 5+ fragmented wizard screens hiding cross-section context | **<= 3 logical stages** | `1` (`Full Page` or `Split Workbench`) | Combine related inputs onto a single scrollable surface with clear section headers before resorting to a multi-step wizard. |
+| Input | Meaning | Typical Evidence |
+|-------|---------|------------------|
+| `J` | Job type of the primary job | JTBD verb |
+| `N` | Cardinality per user/workspace at 12 months (`one`, `few`, `many`) | API pagination, existing data, intake answer |
+| `C` | Object complexity (`simple`, `medium`, `complex`) | Attribute count shown to this role, sub-collections |
+| `F` | Frequency (`daily`, `weekly`, `rare`) | Role profile |
+| `R` | Worst action risk in scope (`A`, `B`, `C`) | ORCA CTAs |
+| `X` | Comparison need across records | Jobs |
+| `V` | Visual recognition (image or preview) | Attributes |
+| `S` | Sequential dependency between inputs | Form analysis |
 
-### 2.3 KISS Anti-Bloat Pruning Rules
+### 2.3 Data Source (Front-End Only)
 
-During Plane 2, actively prune any proposed UI element that violates these rules:
-- **Zero Redundant Confirmation Modals**: Never add an `"Are you sure you want to save?"` dialog to non-destructive create/update actions.
-- **Zero Decorative Dashboards**: Every metric card or chart at the top of a screen MUST either (a) answer a daily operational triage question or (b) act as a clickable quick-filter for the collection below.
-- **Zero Duplicate Filter Surfaces**: Do not combine a left-hand filter sidebar, a top filter bar, AND column-header filter popovers on the same table. Use a single cohesive `DataTableToolbar` (search input + 1–3 faceted filter pills + reset action).
+Name the existing API contract, client, or query hook that serves each object (path). When none exists, declare **typed mocks** that the builder creates inside the feature, shaped like the expected contract. Never plan backend, schema, or server changes.
 
-### 2.4 User Story Mapping — Walking Skeleton vs. Deferred Scope
+### 2.4 Anti-Bloat Pruning Rules
 
-Separate scope into two explicit buckets in `pcs/specs/<feature-name>.md`:
-- **Walking Skeleton (MVP Slice — Must Build Now)**: The minimum end-to-end flow across all required objects, including all **5 Mandatory Negative States**.
-- **Deferred Enhancements (Out of Current Slice)**: Secondary bulk actions, advanced export formats, or historical analytics explicitly excluded to keep cognitive load and review scope bounded.
+- **Zero redundant confirmations**: never confirm non-destructive create or update actions.
+- **Zero decorative dashboards**: every metric or chart answers an operational question or acts as a quick filter.
+- **Zero duplicate filter surfaces**: one filter bar per collection.
+
+### 2.5 Scope Slice
+
+Separate scope into two buckets:
+- **Walking skeleton (build now)**: the minimum end-to-end flow across the required objects, state-complete.
+- **Deferred enhancements**: secondary bulk actions, exports, analytics, and anything not needed by the primary job.
+
+### 2.6 Optional: Task Step Budget
+
+A hierarchical task analysis or keystroke-level step budget is optional. Use it only when the request is about reducing interaction cost; otherwise the composer's decision tree and the verifier's walkthrough cover step count.

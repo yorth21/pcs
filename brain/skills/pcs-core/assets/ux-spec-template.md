@@ -1,150 +1,123 @@
 # UX & Product Specification — `<feature-name>`
 
 - **Feature Slug**: `<feature-name>`
-- **Execution Tier**: `Tier 2 (Bounded Flow)` | `Tier 3 (Full Feature)`
-- **Active Stack Adapter**: `pcs-adapter-react-shadcn`
-- **Status**: `Draft` | `Approved for Build` | `Verified`
+- **Flow Kind**: `t2` | `t3`
+- **Active Stack Adapter**: `<adapter skill name>`
+- **UI Inventory**: `pcs/design/inventory.md` (refreshed `<date>`)
+- **Status**: `Draft` | `Composed` | `Built` | `Verified`
 
 ---
 
-## 1. Plane 1 — Product Strategy (`pcs-strategist`)
+## 1. Plane 1 — Strategy (`pcs-strategist`)
 
-### 1.1 Operational Role & Environment Profile
-- **Primary Operator Role**: `<e.g., Billing Operations Specialist>`
-- **Frequency of Use**: `<e.g., High-frequency daily workbench (40+ executions/shift) | Low-frequency setup>`
-- **Domain Expertise**: `<e.g., Specialist — requires high information scent and rapid filtering>`
-- **Workspace & Viewport Context**: `<e.g., Desktop 1440px primary, 768px tablet secondary; high interruption rate>`
-- **Error Consequence**: `<e.g., High — financial ledger impact on destructive actions>`
+### 1.1 Operational Role & Environment
+- **Role**: `<e.g., Billing operations specialist>`
+- **Domain expertise**: `<novice | specialist>` — `<page impact>`
+- **Frequency (`F`)**: `<daily | weekly | rare>` — `<evidence>`
+- **Environment & primary viewport**: `<e.g., desktop 1440px, frequent interruptions>`
+- **Error consequence**: `<e.g., high — ledger impact on void>`
 
-### 1.2 Jobs-to-be-Done (JTBD)
-> **When** `<triggering operational situation>`,
-> **I want to** `<core capability/action>`,
-> **so I can** `<measurable user and business outcome>`.
-
-- **Functional Outcome**: `<concrete task speedup or step reduction>`
-- **Emotional Outcome**: `<confidence, zero anxiety over accidental loss or hidden filters>`
-- **Social / Auditability Outcome**: `<clear team visibility and status traceability>`
-
-### 1.3 Declared Assumptions Ledger
-| ID | Declared Assumption | Confidence (`High`/`Med`/`Low`) | Risk if Wrong & UX Impact | Validation Method |
-|----|---------------------|---------------------------------|---------------------------|-------------------|
-| `A-01` | `<assumption statement>` | `High` | `<risk and what container or flow would change>` | `<codebase check, API schema inspection, or user question>` |
-
-### 1.4 Measurable Outcome Metrics
-| Metric | Target | Verification Method |
-|--------|--------|---------------------|
-| **Primary Task KLM Budget** | `<= <N> clicks / <M> view transitions` | HTA/KLM step walkthrough |
-| **Context Preservation** | `0` filter/scroll resets across inspections | URL search params + contextual container check |
-| **Negative Path Completeness** | `5/5` mandatory negative states with recovery CTAs | Heuristic & Playwright verification |
+### 1.2 Jobs
+- **Primary JTBD** (`J = <job type>`):
+  > **When** `<situation>`, **I want to** `<action>`, **so I can** `<outcome>`.
+- **Secondary jobs**:
+  - `<job>` (`J = <job type>`) — `<adds region/action to this page | separate page>`
 
 ---
 
-## 2. Plane 2 — Product Scope & OOUX (`pcs-strategist`)
+## 2. Plane 2 — Scope (`pcs-strategist`)
 
-### 2.1 OOUX ORCA Object Matrix
-| Object (Noun) | Role (`Primary`/`Secondary`) | Relationships & Cardinality (`1:1`, `1:N`, `M:N`) | Permitted CTAs & Role Permissions | Core Attributes (`T1 Identity`, `T2 State`, `T3 Quantitative`) vs. Metadata (`T4 Detail`) |
-|---------------|------------------------------|---------------------------------------------------|-----------------------------------|-------------------------------------------------------------------------------------------|
-| `<ObjectName>` | `Primary` | `<e.g., 1:N with LineItem>` | `Create`, `Edit`, `Archive` (`Low Risk`), `Delete` (`High Risk / Admin`) | **Core — T1**: `code`, `name`<br/>**Core — T2**: `status`<br/>**Core — T3**: `amount`, `updatedAt` (`tabular-nums`)<br/>**Metadata — T4**: `notes`, `auditTrail` |
+### 2.1 OOUX ORCA Matrix
+| Object | Role | Relationships (cardinality) | Actions (role, risk `A`/`B`/`C`) | Attributes (T1 / T2 / T3 / T4) |
+|--------|------|-----------------------------|----------------------------------|--------------------------------|
+| `<Object>` | Primary | `1:N <Related>` | Create (member, `A`); Archive (member, `A`); Delete (admin, `C`) | T1 `code`, `name`; T2 `status`; T3 `amount`, `updatedAt`; T4 `notes`, history |
 
-### 2.2 HTA / KLM Task Step Budget & KISS Pruning
-| User Sub-Goal | Unpruned Baseline (Clicks / Keystrokes / Views) | KISS-Pruned Budget (Clicks / Keystrokes / Views) | Chosen Interaction Path | Pruned Bloat (What We Refused to Build) |
-|---------------|-------------------------------------------------|--------------------------------------------------|-------------------------|-----------------------------------------|
-| `<Sub-goal 1>` | `<e.g., 6 clicks, 2 page loads, 1 confirm modal>` | `<e.g., <= 3 clicks + typing, 0 page loads>` | `<e.g., Direct Sheet form with smart defaults>` | `<e.g., Eliminated intermediate confirmation modal>` |
+### 2.2 Classification Inputs
+| Input | Value | Evidence |
+|-------|-------|----------|
+| `J` job type | `<value>` | `<JTBD verb>` |
+| `N` cardinality | `<one/few/many>` | `<API pagination, data, intake answer, or A-xx>` |
+| `C` complexity | `<simple/medium/complex>` | `<attribute count, sub-collections>` |
+| `F` frequency | `<daily/weekly/rare>` | `<role profile>` |
+| `R` worst action risk | `<A/B/C>` | `<CTA>` |
+| `X` comparison | `<yes/no>` | `<job>` |
+| `V` visual recognition | `<yes/no>` | `<attributes>` |
+| `S` sequential dependency | `<yes/no>` | `<form analysis>` |
 
-### 2.3 User Story Mapping Slice
-- **Walking Skeleton (MVP — Must Build Now)**:
-  - `<End-to-end core capability + all 5 Mandatory Negative States>`
-- **Deferred Enhancements (Out of Current Slice)**:
-  - `<Explicitly deferred secondary features>`
+### 2.3 Data Source (front-end only)
+| Object | Existing contract (path) or typed mock | Notes |
+|--------|----------------------------------------|-------|
+| `<Object>` | `<path to API client or query hook>` \| `typed mock in feature` | `<pagination, filters supported>` |
 
----
+### 2.4 Scope Slice
+- **Walking skeleton (build now)**: `<end-to-end flow, state-complete>`
+- **Deferred**: `<explicitly excluded enhancements>`
 
-## 3. Plane 3 — Structure: IA & State-Complete Flows (`pcs-architect`)
+### 2.5 Declared Assumptions (only those that drive a decision)
+| ID | Assumption | Drives | Risk if Wrong |
+|----|------------|--------|---------------|
+| `A-01` | `<statement>` | `<input or rule, e.g., N = many -> T17>` | `<what would change>` |
 
-### 3.1 Information Architecture & URL State Contract
-- **Navigation Path (<= 2 levels)**: `<e.g., Sidebar: Operations -> Procedures>`
-- **URL Search Parameters**:
-  - `?q=` (string search filter)
-  - `?status=` (faceted status filter)
-  - `?page=` & `?pageSize=` (pagination state)
-  - `?inspectId=` (optional deep-linked record in `Sheet`)
-
-### 3.2 Happy Path & 5 Mandatory Negative States
-| Flow / State | Trigger Condition | UI Component & Copy Contract | Recovery / Primary CTA |
-|--------------|-------------------|------------------------------|------------------------|
-| **Happy Path** | `totalCount > 0` and `filteredCount > 0` | `DataTable` + `DataTableToolbar` + `DataTablePagination` | Primary header CTA + row action menu |
-| **1. Zero-Data State** | `totalCount === 0` (no records exist yet) | `Empty` container with icon, value proposition title, and helper text | `"+ Create first <entity>"` (`Button` default) |
-| **2. No-Results State** | `totalCount > 0` and `filteredCount === 0` | Filtered empty banner inside table body showing active query/filters | `"Clear filters"` (`Button` outline/secondary) |
-| **3. Contextual Loading** | `isLoading === true` or `isSubmitting === true` | Geometry-matched `Skeleton` rows (`CLS = 0`); inline spinner on submit button | Automatic transition on resolve |
-| **4. Partial / Network Error** | `isError === true` on query or mutation | Section-scoped `Alert` (`variant="destructive"`) with human-readable cause | `"Retry"` button (`refetch()`) |
-| **5. Inline Validation Error** | Schema validation failure (`zodResolver`) | Field-adjacent `FieldError` below input + `aria-invalid="true"` | Focus first invalid field; preserve typed input |
+<!-- Optional, only when requested: Outcome Metrics, Task Step Budget. -->
 
 ---
 
-## 4. Plane 4 — Skeleton: Containers, Friction & Wireframe (`pcs-architect`)
+## 3. Page Composition
 
-### 4.1 Context-Dependent Container Decision Matrix
-| Workflow / Action | Context Dependency (`High`/`Zero`) | Cognitive Load | Selected Container (`Inline`/`Dialog`/`Sheet`/`Page`) | Engineering Rationale |
-|-------------------|------------------------------------|----------------|-------------------------------------------------------|-----------------------|
-| `<e.g., Edit Record>` | `High` (needs table scroll & filter context) | `Medium (6 fields)` | `Sheet` (`side="right"`, `sm:max-w-lg`) | Preserves background table visibility and URL filter state. |
-| `<e.g., Quick Create>` | `Zero` (atomic self-contained entry) | `Low (3 fields)` | `Dialog` (`sm:max-w-md`) | Fast focused entry requiring no reference to background rows. |
+<!-- Planes 3–4, written by pcs-architect. This section is the `## Page Composition` section of pcs-saas references/04-template-decision-tree.md §4: one block per page with Template, Region Tree, Data Contract, State Matrix, Actions and Friction, Inventory Reuse, Responsive Notes, and Acceptance Checks. The region tree is mandatory; a compact wireframe may follow it. -->
 
-### 4.2 Risk-Proportional Friction Matrix
-| Action | Risk Tier (`Low`/`Medium`/`High`) | Friction Pattern | Exact UI Copy / Mechanism |
-|--------|-----------------------------------|------------------|---------------------------|
-| `<e.g., Toggle Active>` | `Low (Reversible)` | Optimistic update + `sonner` Undo toast | Toast: `"<Entity> archived"` + Action: `"Undo"` |
-| `<e.g., Close Dirty Sheet>` | `Medium (Unsaved Edits)` | Dirty-close guard (`formState.isDirty`) | Confirm discard if user clicks outside while `isDirty` |
-| `<e.g., Delete Record>` | `High (Destructive)` | `<AlertDialog>` with explicit impact | Title: `"Delete <entityName>?"` + CTA: `"Delete <entity>"` (`variant="destructive"`) |
-
-### 4.3 Empirical Cognitive Laws Verification
-- **Fitts's Law**: All interactive targets >= `36px` desktop (`h-9`) / >= `44px` touch; Primary CTA anchored top-right of page and bottom-right of footers.
-- **Hick's Law**: Single Primary CTA in header; row actions consolidated into `<DropdownMenu>`.
-- **Miller's Law**: Table capped at `<= 6` visible columns; form inputs chunked into logical groups of `<= 5` fields.
-- **Jakob's Law**: Standard toolbar search at top-left, primary creation CTA at top-right, `"Cancel"` left of `"Save"`, `Escape` closes overlays.
-- **Tesler's Law**: Smart defaults pre-populated (pagination, default status/category, current date/org) so complexity stays in the system.
-- **Doherty Threshold**: Instant skeleton/optimistic feedback `< 400ms`.
-- **Gestalt Proximity & Common Region**: Field label gap (`gap-1.5`) < field-to-field gap (`gap-4`) < section gap (`gap-6`); related sections grouped in shared `Card` / `FieldSet` borders.
-
-### 4.4 Structural ASCII Wireframe & Component Map
-```text
-+-----------------------------------------------------------------------------------+
-| PageHeader: <Title> + <Description>                     [+ Primary CTA Button]    |
-+-----------------------------------------------------------------------------------+
-| DataTableToolbar: [Search Input] [Status Filter] [Reset]                          |
-+-----------------------------------------------------------------------------------+
-| DataTable (Columns: Code | Name | Status Badge | Amount [tabular-nums] | Actions) |
-+-----------------------------------------------------------------------------------+
-| DataTablePagination                                                               |
-+-----------------------------------------------------------------------------------+
-```
+### Page: `<Page name>` — `<route>`
+<!-- Sections 1–8 per pcs-saas 04 §4. -->
 
 ---
 
-## 5. Plane 5 — Surface & Token Rules (`pcs-builder`)
-- **60-30-10 Color Budget**: `60%` `background`/`card`, `30%` `muted`/`border`, `10%` `primary` (1 solid primary CTA per viewport) and semantic status badges.
-- **Typography**: 3 levels max (`Title` `text-lg/xl font-semibold`, `Body/Cell` `text-sm`, `Metadata` `text-xs text-muted-foreground`).
-- **Numeric Discipline**: `tabular-nums` applied to all amounts, dates, counts, and codes.
-- **Component Hygiene**: 100% vanilla `shadcn/ui` primitives from `@/components/ui/*` + shared `@/components/{form,data-table,layout}/*`. Zero custom wrapper abstractions; zero Atomic Design suffixes.
+## 4. Navigation & URL State (`pcs-architect`, optional)
+- **Navigation path (<= 2 levels)**: `<sidebar item -> page -> tab>`
+- **URL parameters**: `<listed per region in each Data Contract>`
 
 ---
 
-## 6. Verification & Heuristic Audit (`pcs-verifier`)
+## 5. Build Notes (`pcs-builder`)
+- **Blueprints used**: `<adapter template per page>`
+- **Inventory changes**: `<components reused, extended, or added>`
+- **Checks**: `<typecheck / lint / build results>`
 
-### 6.1 10 Usability Heuristics Scorecard (0–4 Scale; 0 Blockers >= 3 Allowed)
-| Heuristic | Severity (`0–4`) | Evidence / Observation |
-|-----------|------------------|------------------------|
-| H1: Visibility of System Status | `0` | `<evidence>` |
-| H2: Match Between System and Real World | `0` | `<evidence>` |
-| H3: User Control and Freedom | `0` | `<evidence>` |
-| H4: Consistency and Standards | `0` | `<evidence>` |
-| H5: Error Prevention | `0` | `<evidence>` |
-| H6: Recognition Rather Than Recall | `0` | `<evidence>` |
-| H7: Flexibility and Efficiency of Use | `0` | `<evidence>` |
-| H8: Aesthetic and Minimalist Design | `0` | `<evidence>` |
-| H9: Recognize, Diagnose, and Recover from Errors | `0` | `<evidence>` |
-| H10: Contextual Help and Documentation | `0` | `<evidence>` |
+---
 
-### 6.2 4-Question Cognitive Walkthrough & Playwright Check
-- **Q1 (Intent)** / **Q2 (Visibility)** / **Q3 (Association)** / **Q4 (Feedback)**: `<Pass / Findings>`
-- **WCAG 2.2 AA & Keyboard Navigation**: `<Pass / Findings>`
-- **Playwright Viewport Audit (`1440x900` & `390x844`)**: `<Pass / Skipped (no running server)>`
+## 6. Verification Report (`pcs-verifier`)
+
+- **Run**: `<initial | after fix round N>` — `<date>`
+- **Verdict**: `Pass` (0 blocking) | `Fail` (`<n>` blocking)
+- **Static checks**: `<typecheck / lint / build>`
+- **Captures**: `.pcs/playwright/<page>-<viewport>-<state>.png` ...
+
+### 6.1 Blocking Findings (Severity 3–4)
+| ID | Sev | Check | Evidence | Location | Expected vs Actual | Fix | Status |
+|----|-----|-------|----------|----------|--------------------|-----|--------|
+| `F-1` | `3` | `S3` | `.pcs/playwright/list-desktop-s3.png` | `<file:line>` | `<expected>` vs `<actual>` | `<one concrete instruction>` | open \| resolved |
+
+### 6.2 Other Findings (Severity 0–2)
+| ID | Sev | Check | Evidence | Location | Expected vs Actual | Fix |
+|----|-----|-------|----------|----------|--------------------|-----|
+
+### 6.3 Contract Coverage
+| Page | Anatomy | `AC-*` passed / total | States verified live / static / n/a | `VC-*` failed | Inventory reuse |
+|------|---------|-----------------------|-------------------------------------|---------------|-----------------|
+
+### 6.4 Heuristics, Walkthrough & Laws (rendered UI)
+| Heuristic | Severity (`0–4`) | Evidence |
+|-----------|------------------|----------|
+| H1 Visibility of system status | `<0–4>` | `<evidence>` |
+| H2 Match with the real world | | |
+| H3 User control and freedom | | |
+| H4 Consistency and standards | | |
+| H5 Error prevention | | |
+| H6 Recognition rather than recall | | |
+| H7 Flexibility and efficiency | | |
+| H8 Aesthetic and minimalist design | | |
+| H9 Recognize, diagnose, recover from errors | | |
+| H10 Help and documentation | | |
+
+- **Walkthrough (Q1–Q4)**: `<per step: pass or finding ID>`
+- **Cognitive laws (measured)**: `<per law: observation or finding ID>`
+- **Keyboard & WCAG 2.2 AA**: `<pass or finding IDs>`

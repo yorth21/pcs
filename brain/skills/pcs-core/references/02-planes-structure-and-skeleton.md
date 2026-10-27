@@ -1,97 +1,81 @@
-# Planes 3 & 4 — Structure and Skeleton Specification
+# Planes 3 & 4 — Structure and Skeleton Rules
 
-This reference defines the mandatory engineering rules for **Plane 3 (Structure)** and **Plane 4 (Skeleton)** in Product-Centered Development (PCD). These rules govern Information Architecture, State-Complete User Flows, Container Selection, Risk-Proportional Friction, Empirical Cognitive Laws, and Structural Wireframing.
+This reference defines the technology-agnostic rules for **Plane 3 (Structure)** and **Plane 4 (Skeleton)**. The artifact of both planes is the **Page Composition Spec** of `pcs-saas` (`references/04-template-decision-tree.md` §4): template, region -> organism tree, data contract, state matrix, actions and friction, inventory reuse, responsive notes, and acceptance checks. This file explains the rules the spec applies; it never duplicates the catalog.
 
 ---
 
 ## 1. Plane 3: Structure (Information Architecture & State-Complete Flows)
 
-### 1.1 Information Architecture & Navigation Depth Rules
+### 1.1 Navigation Depth
 
-1. **Maximum Navigation Depth (<= 2 Levels)**:
-   - Level 1: Primary application navigation (`Sidebar` with grouped sections or top-level navigation bar).
-   - Level 2: Within-page view switching (`Tabs` or `Breadcrumb` trail).
-   - **Prohibition**: Never nest `Tabs` inside `Tabs`, never place a secondary vertical sidebar inside a page that already has a primary sidebar, and never require more than 2 clicks to reach any core workspace from the root layout.
-2. **URL as Authoritative View State**:
-   - Every filter query (`?q=`), faceted status selection (`?status=`), pagination cursor (`?page=`, `?pageSize=`), sort order (`?sort=`), active tab (`?tab=`), and deep-linked record inspection (`?inspectId=`) SHOULD be serializable in URL search parameters so browser Back/Forward, bookmarking, and shared links restore exact workspace context.
+1. **Maximum depth of 2 levels**: level 1 is the application navigation (sidebar or top navigation); level 2 is within-page view switching (tabs or breadcrumb).
+2. Never nest tabs inside tabs, never add a second vertical navigation inside a page that already has the primary one, and never require more than 2 clicks from the shell to any core workspace.
 
-### 1.2 The 5 Mandatory Negative States (State-Complete User Flow)
+### 1.2 URL as Authoritative View State
 
-A user flow specification that only documents the Happy Path is **incomplete and blocked from Plane 5**. Every data-driven screen or component MUST explicitly define the Happy Path plus all **5 Mandatory Negative States**:
+Search query, facet filters, sort, page and page size, active tab, and deep-linked record inspection SHOULD be serialized in URL search parameters so Back/Forward, bookmarks, and shared links restore the exact view. The Data Contract of the Page Composition Spec lists them per region.
 
-| # | State Name | Trigger Condition | Mandatory UX & Structural Contract |
-|---|------------|-------------------|------------------------------------|
-| **1** | **Zero-Data State** *(First-Use / Empty Collection)* | The underlying collection has `0` total records in the database/store before any user filter is applied. | Render a dedicated `Empty` container explaining *what* lives here, *why* it matters, and providing **1 primary onboarding CTA** (e.g., `"+ Create first procedure"`). Never show a bare table header over a blank white box. |
-| **2** | **No-Results State** *(Filtered / Searched Empty)* | The underlying collection has records (`totalCount > 0`), but the active search query or faceted filters match `0` rows. | **MUST be visually and logically distinct from Zero-Data.** Keep the `DataTableToolbar` visible, state which query/filter produced zero matches, and provide an immediate **`"Clear filters"` / `"Reset search"`** secondary button. Never tell the user to "Create your first record" when records merely failed to match a filter. |
-| **3** | **Contextual Loading State** | Initial data fetch or background refetch is in progress. | For initial load, render geometry-matching `Skeleton` placeholders that mirror the exact header, toolbar, and row heights (`CLS = 0`). Never block a whole page with a centered full-screen spinner when only one table or card is loading. For > 400ms mutations, disable the trigger and show an inline spinner inside the active `Button`. |
-| **4** | **Partial / Network Error State** | An API query or mutation fails due to network timeout, 4xx/5xx response, or permission denial. | Isolate the failure to the affected section using an inline `Alert` (`variant="destructive"`) or section boundary with a human-readable explanation and a **`"Retry"`** button. Never crash the entire application shell when a single widget or table fails. |
-| **5** | **Inline Validation Error State** | User submits or blurs a form field that violates schema constraints (`Zod` / business rules). | Render field-adjacent `<FieldError>` directly below the offending input, set `aria-invalid="true"` and `aria-describedby`, preserve all user-typed values, and focus the first invalid field on submit. Never clear a form on error or rely solely on a transient toast for field validation errors. |
+### 1.3 The 5 Mandatory Negative States
+
+A flow that documents only the happy path is incomplete. The state matrix of `pcs-saas` (`S1`–`S7`) is the required superset; these five are the minimum every data screen MUST cover:
+
+| # | State | `pcs-saas` Code | Trigger | Contract |
+|---|-------|-----------------|---------|----------|
+| 1 | **Zero-Data** (first use) | `S2` | Collection total is `0` before any filter | Explains what lives here and why, with one primary create action. Never a bare table header over a blank area. |
+| 2 | **No-Results** (filtered empty) | `S3` | Total `> 0`, active query or filters match `0` | Distinct from Zero-Data: filter bar stays visible, names the query or filters, offers "Clear filters". Never offers "Create first". |
+| 3 | **Contextual Loading** | `S1` | Initial fetch or refetch in flight | Skeletons that match the final geometry (no layout shift); no full-page spinner after the shell renders. Mutations over 400 ms disable the trigger and show progress inside it. |
+| 4 | **Partial / Network Error** | `S4` | A query or mutation fails | Error scoped to the failing region with a plain-language cause and "Retry"; shell, header, and sibling regions stay usable. |
+| 5 | **Inline Validation Error** | form fields | A field violates a rule on blur or submit | Message adjacent to the field, programmatically linked to it and marked invalid; typed values preserved; focus moves to the first invalid field on submit. |
+
+`S5` (no permission), `S6` (partial or degraded), and `S7` (success feedback) complete the matrix.
 
 ---
 
-## 2. Plane 4: Skeleton (Containers, Friction, Cognitive Laws & Wireframes)
+## 2. Plane 4: Skeleton (Containers, Friction, Layout)
 
-### 2.1 Context-Dependent Container Decision Matrix
+### 2.1 Context-Dependent Container Matrix
 
-**Core Engineering Rule:** Never select a `Dialog`, `Sheet`, or `Page` based solely on input field count. Always evaluate **Context Dependency** (Does the operator need to read or compare background screen data while completing the task?) and **Cognitive Load** first.
+Never choose a container by field count alone. Evaluate **context dependency** (does the user need to read the background while acting?) and **cognitive load** first. The `pcs-saas` container rules `K01`–`K06` apply this matrix deterministically.
 
-| Container Type | Context Dependency | Typical Complexity / Scope | When to Select | Anti-Patterns (Strictly Forbidden) |
-|----------------|--------------------|----------------------------|----------------|------------------------------------|
-| **Inline Edit / Popover / Command** | **Maximum** (100% in-place) | 1–2 attributes (status change, assignee picker, quick rename, tag selection) | Rapid scanning or triage in a table/list where opening an overlay breaks visual rhythm. | Multi-field creation forms inside a tiny `Popover`. |
-| **Modal `Dialog`** | **Zero** (Background is dimmed & inert) | Short, self-contained atomic task (typically 1–4 fields, single-step) | Quick creation or focused confirmation where the user needs **zero reference** to occluded background rows. | Stacking a `Dialog` on top of another `Dialog`; placing long scrollable forms (> 5 fields) or multi-tab views inside a `Dialog`. |
-| **Side `Sheet`** *(or bottom `Drawer` on mobile)* | **High** (Background table/list remains partially visible and scroll position is preserved) | Contextual creation, editing, or record inspection (typically 4–12 fields, audit log, or detail summary) | Operator is iterating through a list/table and needs to inspect or edit a record without losing scroll offset, active filters, or spatial context. | Putting a full 10-column data table inside a narrow `Sheet`. |
-| **Full Page / Split Workbench** (`ResizablePanelGroup`) | **Dedicated Workspace** | High complexity (12+ fields across logical sections, multi-object composition, document preview + form side-by-side) | Deep authoring, multi-section settings, or side-by-side comparison (e.g., PDF/invoice on left, reconciliation form on right). | Forcing a complex 15-field configuration flow into a cramped modal overlay. |
+| Container | Context Dependency | Typical Scope | Select When | Forbidden |
+|-----------|--------------------|---------------|-------------|-----------|
+| **Inline / popover** | Maximum (in place) | 1–2 attributes | Rapid scanning or triage in a list | Multi-field creation in a popover |
+| **Modal dialog** | Zero (background inert) | Short atomic task, `<= 6` fields, single step | Focused create or confirm with no need to see the background | Dialog over dialog; long scrolling forms or tabs in a dialog |
+| **Side sheet** (full-screen on mobile) | High (list stays visible, scroll preserved) | Contextual create, edit, or inspection, `<= 12` fields | Iterating through records without losing scroll, filters, or position | A wide multi-column table inside a sheet |
+| **Full page / split workbench** | Dedicated workspace | `> 12` fields, `>= 3` sections, complex objects, side-by-side comparison, bookmarkable destinations | Deep authoring, multi-section settings, comparison | Forcing a long configuration into an overlay |
 
 ### 2.2 Risk-Proportional Friction Matrix
 
-Friction must scale strictly with **irreversibility and blast radius**:
+Friction scales with irreversibility and blast radius; the `pcs-saas` friction rules `R01`–`R05` apply it.
 
-| Action Risk Tier | Examples | Required Interaction Pattern |
-|------------------|----------|------------------------------|
-| **Tier A — Low Risk / Easily Reversible** | Archiving an item, toggling active/inactive status, changing a filter, updating a non-critical attribute | **Zero confirmation dialog.** Execute immediately (optimistic UI update where safe) and display a non-blocking `sonner` toast with an explicit **`Undo`** button for 5–8 seconds. |
-| **Tier B — Medium Risk / Unsaved Work Loss** | Clicking outside a `Sheet` or `Dialog` or pressing `Escape` after modifying form inputs (`isDirty === true`) | **Dirty-Close Guard.** If `isDirty` is `false`, close immediately. If `isDirty` is `true`, intercept dismissal and prompt to discard changes or continue editing. |
-| **Tier C — High Risk / Destructive or Irreversible** | Permanently deleting a record, revoking access, voiding a financial transaction, executing a bulk irreversible mutation | **Mandatory `<AlertDialog>`.** Must state: (1) the exact entity name/ID, (2) the concrete irreversible consequence, and (3) a verb-specific destructive button (`variant="destructive"`, e.g., `"Delete procedure"`), paired with `"Cancel"`. For high-blast-radius bulk deletions, require typing the resource name or count to enable the destructive button. |
+| Risk Tier | Examples | Pattern |
+|-----------|----------|---------|
+| **A — Reversible** | Archive, toggle status, change a filter, edit a non-critical attribute | No confirmation. Execute immediately (optimistic where safe) and offer "Undo" in a non-blocking notification for 5–8 seconds when the item leaves the view. |
+| **B — Unsaved work loss** | Escape, backdrop click, or navigation away from a modified form | Dirty-close guard: close immediately when clean; ask to discard or keep editing when modified. |
+| **C — Destructive or irreversible** | Permanent delete, revoke access, void a transaction, bulk irreversible change | Confirmation dialog naming the exact target, the concrete consequence, and a verb-specific destructive button ("Delete invoice #1042") next to "Cancel". High blast radius requires typing the name or count. Money movement or external send shows a review summary before commit. |
 
-### 2.3 Empirical Cognitive & Perceptual Laws Checklist
+### 2.3 Layout Rules the Composer Applies
 
-Every Plane 4 Skeleton specification MUST verify compliance with these seven laws:
+- One primary action per region; secondary actions step down in emphasis; row actions consolidate in one overflow menu with at most 1 inline quick action.
+- Default visible table columns `<= 7`, identity first; secondary attributes move to the detail view or column visibility.
+- Form fields grouped in sections of 3–7 fields; one column by default, two columns only for tightly coupled short pairs.
+- Conventional positions: search at the top-left of the filter bar, primary create action at the top-right of the page header, "Cancel" before the confirming action in footers, Escape closes overlays.
+- Smart defaults (current date, current organization, default page size, default status) keep complexity in the system.
 
-1. **Fitts's Law (Target Acquisition)**:
-   - Interactive controls must have a minimum clickable/tappable area of **`36x36px` on desktop** (`h-9`) and **`44x44px` on touch/mobile** (`min-h-11 min-w-11`).
-   - Place the primary submit CTA at the natural terminal anchor of the container (bottom-right of `DialogFooter`/`SheetFooter`/`CardFooter`, or top-right of `PageHeader`) with at least `8px` (`gap-2`) separation from `"Cancel"` or destructive buttons.
-2. **Hick's Law (Decision Latency)**:
-   - Expose at most **5 top-level actions or navigation items** in a single toolbar or row.
-   - In table rows, show at most **1 inline quick action** (or `0`) and consolidate secondary/destructive row actions inside a single `<DropdownMenu>` triggered by a `MoreHorizontal` icon button with `aria-label`.
-3. **Miller's Law (Working Memory Chunking)**:
-   - Group related form fields into visual chunks of **3–7 fields** separated by `FieldSet` / `Card` sections or subtle dividers.
-   - Limit data tables to **5–7 visible columns by default**; move secondary attributes to the row inspection `Sheet` or optional column visibility toggles.
-4. **Jakob's Law (Mental Model Consistency)**:
-   - Preserve standard web and SaaS conventions: search input at top-left of toolbars, primary creation CTA at top-right of page header, `"Cancel"` to the left of `"Save"` in footers, and Escape to close overlays.
-5. **Tesler's Law (Conservation of Complexity)**:
-   - Shift complexity from the user to the system: pre-populate today's date, current user's organization, sensible default pagination (`10` or `25` rows), and automatic formatting rather than forcing manual entry.
-6. **Doherty Threshold (< 400ms System Response)**:
-   - Every user interaction must produce visual acknowledgment within **100–400ms** (instant hover/active states, optimistic toggles, or immediate skeleton/button-spinner transitions).
-7. **Gestalt Principles (Proximity, Similarity, Common Region, Figure-Ground)**:
-   - **Proximity**: Label-to-input gap (`gap-1.5` / `6px`) MUST be strictly smaller than input-to-next-field gap (`gap-4` / `16px`), which MUST be smaller than section-to-section gap (`gap-6` or `gap-8` / `24–32px`).
-   - **Common Region**: Group related metrics, filters, or form sections inside a single shared border (`Card` or `bg-muted/30` container) rather than wrapping every single field in its own box.
+These rules are written into the region tree and actions table of the Page Composition Spec. Compliance is not declared in the spec: the verifier measures it on the rendered UI (`references/04-heuristic-and-walkthrough-verification.md` §5).
 
-### 2.4 Structural ASCII Wireframe Notation
+### 2.4 Wireframes
 
-Before handing off to `pcs-builder`, represent the Skeleton layout in `pcs/specs/<feature-name>.md` using a clean structural wireframe that maps regions to exact component primitives and grid spans:
+The region -> organism tree of the Page Composition Spec is mandatory. A compact structural wireframe MAY accompany it to show placement; a wireframe alone never satisfies Plane 4.
 
 ```text
-+-----------------------------------------------------------------------------------+
-| PageHeader: Title + Description (left)                  [+ Primary CTA] (right)   |
-+-----------------------------------------------------------------------------------+
-| MetricStrip (Optional, max 3-4 clickable filter cards, grid-cols-1 md:grid-cols-3)|
-| [ Total Active (142) ]      [ Needs Review (7) ]        [ Overdue ($12,400.00) ]  |
-+-----------------------------------------------------------------------------------+
-| DataTableToolbar: [Search Input (w-72)] [Status Filter] [Reset]    [Column View]  |
-+-----------------------------------------------------------------------------------+
-| DataTable (5-7 columns max, tabular-nums on numeric/date/ID, 1 row action menu)   |
-| CODE      | NAME                  | STATUS      | AMOUNT (right) | ACTIONS        |
-| PROC-101  | General Consultation  | [Active]    |        $120.00 | [...]          |
-+-----------------------------------------------------------------------------------+
-| DataTablePagination: Showing 1-10 of 142 rows           [< Prev] [1] [2] [Next >] |
-+-----------------------------------------------------------------------------------+
++--------------------------------------------------------------+
+| page-header: title + description              [primary CTA]  |
++--------------------------------------------------------------+
+| filter-bar: search | 1-3 facet filters | reset | view options |
++--------------------------------------------------------------+
+| data-table (identity first, <= 7 columns, row overflow menu) |
++--------------------------------------------------------------+
+| pagination: range of total                     prev | next   |
++--------------------------------------------------------------+
 ```
