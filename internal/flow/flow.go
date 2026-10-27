@@ -67,6 +67,16 @@ const CloseCommand = "pcs flow close"
 // AbandonCommand closes an incomplete flow after an explicit user cancellation.
 const AbandonCommand = `pcs flow close --abandon --reason "..."`
 
+// AdoptCommand hands the active flow to the session that runs it.
+const AdoptCommand = "pcs flow adopt"
+
+// StaleAfter is how long an active flow may go without a state write before
+// `pcs flow start` auto-abandons it.
+const StaleAfter = 12 * time.Hour
+
+// StaleReason is the abandon reason recorded for an auto-abandoned stale flow.
+const StaleReason = "stale: no activity for >12h"
+
 // Now is the clock used for timestamps; tests replace it.
 var Now = func() time.Time { return time.Now().UTC() }
 
@@ -136,6 +146,42 @@ type Flow struct {
 	InlineFiles     []string `json:"inline_files"`
 	ClosedAt        string   `json:"closed_at,omitempty"`
 	AbandonedReason string   `json:"abandoned_reason,omitempty"`
+	// OwnerSessionID is the Claude Code session bound to the flow. It is empty
+	// until the first hook event of a session claims it, and again after adopt.
+	OwnerSessionID string `json:"owner_session_id,omitempty"`
+	ClaimedAt      string `json:"claimed_at,omitempty"`
+	// UpdatedAt is refreshed on every state write.
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// ForeignTo reports whether the flow is owned by a session other than
+// session. An unowned flow, or an unknown session, is never foreign.
+func (f *Flow) ForeignTo(session string) bool {
+	return f != nil && f.OwnerSessionID != "" && session != "" && f.OwnerSessionID != session
+}
+
+// ForeignNotice explains that the active flow belongs to another session and
+// how to resume or discard it.
+func (f *Flow) ForeignNotice() string {
+	return fmt.Sprintf("An unfinished PCD flow `%s` from another session is active. Resume it with `%s` or discard it with `%s`, then start yours.", f.Feature, AdoptCommand, AbandonCommand)
+}
+
+// lastActivity returns the time of the last state write, falling back to the
+// creation time for state files written before updated_at existed.
+func (f *Flow) lastActivity() (time.Time, bool) {
+	for _, ts := range []string{f.UpdatedAt, f.CreatedAt} {
+		if t, err := time.Parse(time.RFC3339, ts); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// Stale reports whether the flow has had no state write for more than
+// StaleAfter.
+func (f *Flow) Stale() bool {
+	t, ok := f.lastActivity()
+	return ok && Now().Sub(t) > StaleAfter
 }
 
 // Transition is the typed next step the model must take.
@@ -353,8 +399,9 @@ func (s Store) Load(feature string) (*Flow, error) {
 	return &f, nil
 }
 
-// Save writes f atomically.
+// Save refreshes f.UpdatedAt and writes f atomically.
 func (s Store) Save(f *Flow) error {
+	f.UpdatedAt = Now().Format(time.RFC3339)
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
@@ -390,29 +437,74 @@ func (s Store) Active() (*Flow, error) {
 }
 
 // Start creates and activates a new flow. It refuses while another open flow
-// is active.
+// is active (see StartReplacingStale).
 func (s Store) Start(feature, kind string) (*Flow, error) {
+	f, _, err := s.StartReplacingStale(feature, kind)
+	return f, err
+}
+
+// StartReplacingStale creates and activates a new flow. An active flow with no
+// state write for more than StaleAfter is abandoned with StaleReason and
+// returned as abandoned; any other active flow makes it refuse.
+func (s Store) StartReplacingStale(feature, kind string) (f, abandoned *Flow, err error) {
 	active, err := s.Active()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	f, err = New(feature, kind)
+	if err != nil {
+		return nil, nil, err
 	}
 	if active != nil {
-		return nil, fmt.Errorf("flow %s (%s) is already active; finish it with `%s` or cancel it with `%s`", active.Feature, active.Kind, CloseCommand, AbandonCommand)
+		if !active.Stale() {
+			return nil, nil, fmt.Errorf("flow %s (%s) is already active; finish it with `%s`, resume it in this session with `%s`, or cancel it with `%s`",
+				active.Feature, active.Kind, CloseCommand, AdoptCommand, AbandonCommand)
+		}
+		active.AbandonedReason = StaleReason
+		active.ClosedAt = Now().Format(time.RFC3339)
+		if err := s.Save(active); err != nil {
+			return nil, nil, err
+		}
+		abandoned = active
 	}
-	f, err := New(feature, kind)
+	if err := s.ensureGitignore(); err != nil {
+		return nil, nil, err
+	}
+	if err := s.Save(f); err != nil {
+		return nil, nil, err
+	}
+	if err := writeAtomic(s.activePath(), []byte(f.Feature+"\n")); err != nil {
+		return nil, nil, err
+	}
+	return f, abandoned, nil
+}
+
+// Claim binds the open flow f to session when f has no owner yet, and saves
+// it. It reports whether f changed. A nil or closed flow, or an empty session,
+// is left untouched.
+func (s Store) Claim(f *Flow, session string) (bool, error) {
+	session = strings.TrimSpace(session)
+	if f == nil || f.Closed() || f.OwnerSessionID != "" || session == "" {
+		return false, nil
+	}
+	f.OwnerSessionID = session
+	f.ClaimedAt = Now().Format(time.RFC3339)
+	return true, s.Save(f)
+}
+
+// Adopt clears the owner of the active flow, so the next hook event of the
+// session that ran it claims the flow (the CLI has no session id).
+func (s Store) Adopt() (*Flow, error) {
+	f, err := s.Active()
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureGitignore(); err != nil {
-		return nil, err
+	if f == nil {
+		return nil, ErrNoActiveFlow
 	}
-	if err := s.Save(f); err != nil {
-		return nil, err
-	}
-	if err := writeAtomic(s.activePath(), []byte(f.Feature+"\n")); err != nil {
-		return nil, err
-	}
-	return f, nil
+	f.OwnerSessionID = ""
+	f.ClaimedAt = ""
+	return f, s.Save(f)
 }
 
 // ensureGitignore writes <root>/.pcs/.gitignore with "*" when it is missing,

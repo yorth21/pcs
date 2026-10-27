@@ -36,7 +36,7 @@ func RunCLI(args []string, stdout, stderr io.Writer, workDir string) int {
 	case "start":
 		feature = fs.String("feature", "", "Kebab-case feature name")
 		kind = fs.String("kind", "", "Flow kind: audit, inline, t2, or t3")
-	case "status", "next":
+	case "status", "next", "adopt":
 	case "record":
 		phase = fs.String("phase", "", "Phase name")
 		status = fs.String("status", "", "Phase status: done or blocked")
@@ -68,10 +68,19 @@ func RunCLI(args []string, stdout, stderr io.Writer, workDir string) int {
 	msg := ""
 	switch sub {
 	case "start":
-		f, err = store.Start(strings.TrimSpace(*feature), strings.TrimSpace(*kind))
+		var abandoned *Flow
+		f, abandoned, err = store.StartReplacingStale(strings.TrimSpace(*feature), strings.TrimSpace(*kind))
 		msg = "started"
+		if err == nil && abandoned != nil {
+			msg = fmt.Sprintf("started; auto-abandoned flow %s (%s): %s", abandoned.Feature, abandoned.Kind, abandoned.AbandonedReason)
+		}
 	case "status", "next":
 		f, err = store.Active()
+	case "adopt":
+		f, err = store.Adopt()
+		if err == nil {
+			msg = "adopted " + f.Feature + ": the next hook event of this session claims it"
+		}
 	case "record":
 		st := strings.TrimSpace(*status)
 		if st != StatusDone && st != StatusBlocked {
@@ -128,6 +137,11 @@ func printView(w io.Writer, v StatusView) {
 		fmt.Fprintln(w, "Active flow: none")
 	} else {
 		fmt.Fprintf(w, "Active flow: %s (%s)\n", v.Flow.Feature, v.Flow.Kind)
+		owner := v.Flow.OwnerSessionID
+		if owner == "" {
+			owner = "unclaimed (the next hook event claims it)"
+		}
+		fmt.Fprintf(w, "  owner session: %s\n", owner)
 		for _, p := range v.Flow.Phases {
 			fmt.Fprintf(w, "  - %s [%s] %s\n", p.Name, p.Status, strings.Join(p.Agents, " | "))
 		}
@@ -153,9 +167,10 @@ func writeJSON(w io.Writer, v any) int {
 const usage = `usage: pcs flow <subcommand> [--cwd <dir>] [--json]
 
 Subcommands:
-  start --feature <kebab> --kind audit|inline|t2|t3   Start and activate a PCD flow
+  start --feature <kebab> --kind audit|inline|t2|t3   Start and activate a PCD flow (auto-abandons a flow idle for >12h)
   status                                              Show the active flow
   next                                                Print the typed next transition
+  adopt                                               Hand the active flow to the session that runs it
   record --phase <p> --status done|blocked [--agent-id x]
                                                       Manually record a phase (source: manual)
   close [--abandon --reason "..."]                    Close the active flow

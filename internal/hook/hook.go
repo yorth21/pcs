@@ -67,7 +67,7 @@ func Run(event string, stdin io.Reader, stdout io.Writer) int {
 	case "stop":
 		out, err = stop(store, in)
 	case "user-prompt-submit":
-		out, err = userPromptSubmit(store)
+		out, err = userPromptSubmit(store, in)
 	default:
 		err = fmt.Errorf("unknown hook event %q", event)
 	}
@@ -128,20 +128,61 @@ func delegateReason(f *flow.Flow, action string) string {
 
 const inlineExhausted = "inline budget exhausted; escalate with " + flow.AbandonCommand + " and pcs flow start --kind t2|audit"
 
+// sessionFlow loads the active flow, claims it for session when it has no
+// owner yet, and splits it into the flow owned by (or open to) this session
+// and a flow owned by another session. At most one of them is non-nil.
+func sessionFlow(store flow.Store, session string) (own, foreign *flow.Flow, err error) {
+	f, err := store.Active()
+	if err != nil || f == nil {
+		return nil, nil, err
+	}
+	if _, err := store.Claim(f, session); err != nil {
+		return nil, nil, err
+	}
+	if f.ForeignTo(session) {
+		return nil, f, nil
+	}
+	return f, nil, nil
+}
+
+// gate holds the flow state one PreToolUse decision is made against. A flow
+// owned by another session gates exactly like no flow, with its own reason.
+type gate struct {
+	store   flow.Store
+	f       *flow.Flow
+	foreign *flow.Flow
+}
+
+func (g gate) noFlowReason(action string) string {
+	if g.foreign != nil {
+		return foreignReason(g.foreign, action)
+	}
+	return noFlowReason(action)
+}
+
+func foreignReason(f *flow.Flow, action string) string {
+	return fmt.Sprintf("PCD: this session has no active flow, so %s is not allowed from the main thread. %s", action, f.ForeignNotice())
+}
+
 func preToolUse(store flow.Store, in Input) (any, error) {
+	own, foreign, err := sessionFlow(store, in.SessionID)
+	if err != nil {
+		return nil, err
+	}
 	if in.AgentID != "" {
 		// Subagents do the delegated work; they are never gated.
 		return nil, nil
 	}
+	g := gate{store: store, f: own, foreign: foreign}
 	switch in.ToolName {
 	case "Agent", "Task":
-		return gateAgent(store, in)
+		return g.agent(in)
 	case "Read", "Grep", "Glob":
 		path := readPath(in)
 		if exemptRead(store.Root, path) {
 			return nil, nil
 		}
-		return gateRead(store, in.ToolName+" on "+relDisplay(store.Root, path))
+		return g.read(in.ToolName + " on " + relDisplay(store.Root, path))
 	case "Bash":
 		cmd, _ := in.ToolInput["command"].(string)
 		if FlowRecordCommand(cmd) {
@@ -150,9 +191,9 @@ func preToolUse(store flow.Store, in Input) (any, error) {
 		if BashAllowed(cmd) {
 			return nil, nil
 		}
-		return gateRead(store, "Bash command `"+truncate(cmd, 80)+"`")
+		return g.read("Bash command `" + truncate(cmd, 80) + "`")
 	case "Edit", "Write", "MultiEdit", "NotebookEdit":
-		return gateEdit(store, in)
+		return g.edit(in)
 	}
 	return nil, nil
 }
@@ -164,21 +205,18 @@ var AllowedGenericAgents = []string{"claude-code-guide", "statusline-setup"}
 // NonPCSAgentReason is the denial reason for generic subagents on the main thread.
 const NonPCSAgentReason = "Use the pcs-* agent returned by pcs flow next"
 
-func gateAgent(store flow.Store, in Input) (any, error) {
+func (g gate) agent(in Input) (any, error) {
 	agent, _ := in.ToolInput["subagent_type"].(string)
 	agent = strings.TrimSpace(agent)
 	if !strings.HasPrefix(agent, "pcs-") {
 		if slices.Contains(AllowedGenericAgents, agent) {
 			return nil, nil
 		}
-		return denyGenericAgent(store, agent)
+		return g.denyGenericAgent(agent), nil
 	}
-	f, err := store.Active()
-	if err != nil {
-		return nil, err
-	}
+	f := g.f
 	if f == nil {
-		return deny(noFlowReason("delegating to " + agent)), nil
+		return deny(g.noFlowReason("delegating to " + agent)), nil
 	}
 	if len(f.Phases) == 0 {
 		return nil, nil
@@ -196,29 +234,25 @@ func gateAgent(store flow.Store, in Input) (any, error) {
 
 // denyGenericAgent blocks generic subagents (Explore, general-purpose, fork,
 // or an omitted subagent_type) so the coordinator cannot bypass PCD phases.
-func denyGenericAgent(store flow.Store, agent string) (any, error) {
+func (g gate) denyGenericAgent(agent string) any {
 	name := agent
 	if name == "" {
 		name = "(default)"
 	}
-	f, err := store.Active()
-	if err != nil {
-		return nil, err
-	}
 	next := flow.NoFlowTransition().Instruction
-	if f != nil {
-		next = f.Next().Instruction
+	switch {
+	case g.f != nil:
+		next = g.f.Next().Instruction
+	case g.foreign != nil:
+		next = g.foreign.ForeignNotice()
 	}
-	return deny(fmt.Sprintf("PCD: subagent %s is not allowed from the main thread. %s. Next: %s", name, NonPCSAgentReason, next)), nil
+	return deny(fmt.Sprintf("PCD: subagent %s is not allowed from the main thread. %s. Next: %s", name, NonPCSAgentReason, next))
 }
 
-func gateRead(store flow.Store, action string) (any, error) {
-	f, err := store.Active()
-	if err != nil {
-		return nil, err
-	}
+func (g gate) read(action string) (any, error) {
+	f := g.f
 	if f == nil {
-		return deny(noFlowReason(action)), nil
+		return deny(g.noFlowReason(action)), nil
 	}
 	if f.Kind != flow.KindInline {
 		return deny(delegateReason(f, action)), nil
@@ -227,28 +261,25 @@ func gateRead(store flow.Store, action string) (any, error) {
 		return deny(fmt.Sprintf("PCD flow %s (inline): %s denied: %s", f.Feature, action, inlineExhausted)), nil
 	}
 	f.InlineReads++
-	return nil, store.Save(f)
+	return nil, g.store.Save(f)
 }
 
-func gateEdit(store flow.Store, in Input) (any, error) {
+func (g gate) edit(in Input) (any, error) {
 	path := editPath(in)
-	if path == "" || !within(store.Root, path) {
+	if path == "" || !within(g.store.Root, path) {
 		return nil, nil
 	}
-	rel := relSlash(store.Root, path)
+	rel := relSlash(g.store.Root, path)
 	if hasDirPrefix(rel, "pcs") || hasDirPrefix(rel, ".atl") {
 		return nil, nil
 	}
 	if hasDirPrefix(rel, ".pcs") {
 		return deny("PCD: .pcs/ holds CLI-owned flow state; change it only through `pcs flow` commands."), nil
 	}
-	f, err := store.Active()
-	if err != nil {
-		return nil, err
-	}
+	f := g.f
 	action := in.ToolName + " on " + rel
 	if f == nil {
-		return deny(noFlowReason(action)), nil
+		return deny(g.noFlowReason(action)), nil
 	}
 	if f.Kind != flow.KindInline {
 		return deny(delegateReason(f, action)), nil
@@ -262,7 +293,7 @@ func gateEdit(store flow.Store, in Input) (any, error) {
 		return deny(fmt.Sprintf("PCD flow %s (inline) already edits %s; %s denied: %s", f.Feature, strings.Join(f.InlineFiles, ", "), action, inlineExhausted)), nil
 	}
 	f.InlineFiles = append(f.InlineFiles, rel)
-	return nil, store.Save(f)
+	return nil, g.store.Save(f)
 }
 
 func readPath(in Input) string {
@@ -365,11 +396,9 @@ func truncate(s string, n int) string {
 }
 
 func subagentStop(store flow.Store, in Input) error {
-	if !strings.HasPrefix(in.AgentType, "pcs-") {
-		return nil
-	}
-	f, err := store.Active()
-	if err != nil || f == nil {
+	f, _, err := sessionFlow(store, in.SessionID)
+	if err != nil || f == nil || !strings.HasPrefix(in.AgentType, "pcs-") {
+		// A flow owned by another session never receives this session's runs.
 		return err
 	}
 	idx := f.PhaseForAgent(in.AgentType)
@@ -488,11 +517,9 @@ type stopDecision struct {
 }
 
 func stop(store flow.Store, in Input) (any, error) {
-	if in.StopHookActive {
-		return nil, nil
-	}
-	f, err := store.Active()
-	if err != nil || f == nil {
+	f, _, err := sessionFlow(store, in.SessionID)
+	if in.StopHookActive || err != nil || f == nil {
+		// A flow owned by another session never blocks this session.
 		return nil, err
 	}
 	if pending := f.Pending(); len(pending) > 0 {
@@ -512,12 +539,15 @@ type promptContext struct {
 // NoFlowRule is the UserPromptSubmit context injected when no flow is active.
 const NoFlowRule = "PCD: before touching project files run `pcs flow start --feature <kebab> --kind audit|inline|t2|t3` (audit = read-only review of existing UI; never inline for audits), then follow `pcs flow next`."
 
-func userPromptSubmit(store flow.Store) (any, error) {
-	f, err := store.Active()
+func userPromptSubmit(store flow.Store, in Input) (any, error) {
+	f, foreign, err := sessionFlow(store, in.SessionID)
 	if err != nil {
 		return nil, err
 	}
 	ctx := NoFlowRule
+	if foreign != nil {
+		ctx = NoFlowRule + " " + foreign.ForeignNotice()
+	}
 	if f != nil {
 		pending := f.Pending()
 		state := "all mandatory phases done"
