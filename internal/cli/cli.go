@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/yorth21/pcs/internal/doctor"
+	"github.com/yorth21/pcs/internal/flow"
 	"github.com/yorth21/pcs/internal/installer"
 	"github.com/yorth21/pcs/internal/registry"
 )
@@ -63,6 +64,8 @@ func Run(args []string, env Env) int {
 		return runSkillRegistry(rest, env)
 	case "codegraph":
 		return runCodeGraph(rest, env)
+	case "flow":
+		return flow.RunCLI(rest, env.Stdout, env.Stderr, env.WorkDir)
 	default:
 		fmt.Fprintf(env.Stderr, "pcs: unknown command %q\n\n", sub)
 		printUsage(env.Stderr)
@@ -725,6 +728,8 @@ Commands:
   doctor                   Run diagnostic checks on MCP binaries, embedded brain, and target dir
   skill-registry refresh   Scan SKILL.md files and generate .atl/pcs-skill-registry.md
   codegraph init           Validate project root and initialize CodeGraph index (.codegraph/)
+  flow <subcommand>        Deterministic PCD flow state: start, status, next, record, close
+                           (state in <project>/.pcs/flows/<feature>.json)
   version                  Print pcs CLI version
   help                     Show this help message
 
