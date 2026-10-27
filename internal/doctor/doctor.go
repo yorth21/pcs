@@ -106,10 +106,10 @@ func Run(opts Options) (*DiagnosticReport, error) {
 		addCheck("brain-embed", "pcs-routing.md", "ok", "embedded <!-- pcs:ux-routing --> block verified")
 	}
 
-	if agents, err := assets.NativeAgents(); err != nil || len(agents) != 5 {
-		addCheck("brain-embed", "native-agents", "error", fmt.Sprintf("expected 5 native agents, err=%v", err))
+	if agents, err := assets.NativeAgents(); err != nil || len(agents) != len(assets.NativeAgentNames) {
+		addCheck("brain-embed", "native-agents", "error", fmt.Sprintf("expected %d native agents, err=%v", len(assets.NativeAgentNames), err))
 	} else {
-		addCheck("brain-embed", "native-agents", "ok", "5 native subagents (pcs-explorer..pcs-verifier) verified")
+		addCheck("brain-embed", "native-agents", "ok", fmt.Sprintf("%d native subagents (pcs-explorer..pcs-auditor) verified", len(agents)))
 	}
 
 	if _, err := assets.SharedPhaseContract(); err != nil {

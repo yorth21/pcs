@@ -87,7 +87,7 @@ Build the zero-dependency Go binary and install `pcs` (`--scope global` by defau
 make build
 
 # 2. Safe default install into the global Claude config (~/.claude, or $CLAUDE_CONFIG_DIR if set)
-#    Writes CLAUDE.md markers, 5 native subagents, and skills without touching .claude.json or settings.json:
+#    Writes CLAUDE.md markers, 6 native subagents, and skills without touching .claude.json or settings.json:
 ./bin/pcs install --adapter react-shadcn --persona gentleman
 
 # Optional: also merge missing MCP servers (engram, context7, codegraph) and/or the skill-registry hook:
@@ -107,7 +107,7 @@ make build
 
 | Command | Purpose |
 |---------|---------|
-| `pcs install [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--launcher-dir <dir>] [--launcher-args <args>] [--with-plugins] [--no-statusline] [--adapter react-shadcn] [--persona gentleman\|neutral] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Deploy `pcs` orchestrator & infrastructure markers (`pcs:*`), 5 native subagents, and `pcs-core` + Stack Adapter skills. In profile scope, installs `claude-pcs` launchers on PATH, isolates environment, generates `shared-mcp.json`, and inherits status line |
+| `pcs install [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--launcher-dir <dir>] [--launcher-args <args>] [--with-plugins] [--no-statusline] [--adapter react-shadcn] [--persona gentleman\|neutral] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Deploy `pcs` orchestrator & infrastructure markers (`pcs:*`), 6 native subagents, and `pcs-core` + Stack Adapter skills. In profile scope, installs `claude-pcs` launchers on PATH, isolates environment, generates `shared-mcp.json`, and inherits status line |
 | `pcs sync [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--launcher-dir <dir>] [--launcher-args <args>] [--with-plugins] [--no-statusline] [--adapter <name>] [--persona <name>] [--mcp-guidance=true\|false] [--write-mcp-config] [--write-hook] [--dry-run] [--json]` | Re-synchronize embedded `brain/` files and `pcs:*` markers using `.pcs-state.json` (including the persisted `--no-statusline` and `--with-plugins` choices) while honoring any explicit flag overrides such as `--no-statusline=false`. A state written by an older `pcs` (no `schema_version`) is migrated: an unknown `--no-statusline` choice keeps the profile's current statusLine state (nothing is copied into a profile without one), and missing `added_*` records become empty records only when none of the default entries is present. `sync` never creates an install: it exits non-zero when the target has no `.pcs-state.json`. Without `--scope`/`--profile-dir`/`--target-dir` (and no `PCS_INSTALL_SCOPE`), it discovers existing installs (global target and default `~/.claude-pcs` profile) and syncs the single one found; when several exist it lists them and requires `--scope` |
 | `pcs status [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--json]` | Inspect installed `CLAUDE.md` markers (`pcs:*`), native subagents, skills, and MCP configuration |
 | `pcs doctor [--scope global\|workspace\|profile] [--profile <name>] [--profile-dir <dir>] [--target-dir <dir>] [--json]` | Run diagnostic checks on `engram`, `codegraph`, `npx`, `git`, embedded `BrainFS`, and target installation (including profile authentication and PATH status) |
@@ -171,6 +171,7 @@ flowchart LR
 | **4. Skeleton** | `pcs-architect` | Empirical Cognitive Laws + Wireframing | Context-Dependent Container Matrix, Risk-Proportional Friction, ASCII Wireframe, Tasks |
 | **5. Surface** | `pcs-builder` | Agnostic Surface + Stack Adapter | 60-30-10 color budget, 3-level typography, `tabular-nums`, vanilla `shadcn/ui` code |
 | **Verification** | `pcs-verifier` | 10 Heuristics + Cognitive Walkthrough | 0–4 severity audit (0 Severity 3–4 blockers allowed), WCAG AA, Playwright check |
+| **Baseline Audit** | `pcs-auditor` | 10 Heuristics + 5 Negative States (no spec required) | Read-only Audit Report of existing UI persisted to `pcs/audits/<feature>.md` and Engram `pcs/<feature>/audit` |
 
 ---
 
@@ -204,7 +205,8 @@ pcs/
     │   ├── pcs-strategist.md          # Planes 1 & 2 executor (Strategy & Scope)
     │   ├── pcs-architect.md           # Planes 3 & 4 executor (Structure, Skeleton & Tasks)
     │   ├── pcs-builder.md             # Plane 5 executor (Surface & Stack Adapter composition)
-    │   └── pcs-verifier.md            # Heuristic, accessibility & Playwright verifier
+    │   ├── pcs-verifier.md            # Post-build heuristic, accessibility & Playwright verifier
+    │   └── pcs-auditor.md             # Read-only baseline audit of existing UI (audit flows)
     └── skills/
         ├── _shared/
         │   └── pcs-phase-common.md    # Shared artifact locators, Engram persistence & Result Envelope

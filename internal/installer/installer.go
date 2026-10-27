@@ -782,7 +782,7 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	}
 	recordFile("upsert-markers", layout.claudeMDPath, markerSummary)
 
-	// 2. Write 5 native subagents and ownership manifest.
+	// 2. Write the native subagents and ownership manifest.
 	var agentNames []string
 	for _, agent := range agentsList {
 		dst := filepath.Join(layout.agentsDir, agent.RelPath)

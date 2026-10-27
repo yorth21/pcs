@@ -1,6 +1,6 @@
 # Usability Heuristics, Cognitive Walkthrough and Accessibility Verification
 
-This reference defines the mandatory verification rubric executed by `pcs-verifier` (and self-checked by `pcs-builder`) before any PCD feature is marked `done`.
+This reference defines the mandatory verification rubric executed by `pcs-verifier` (and self-checked by `pcs-builder`) before any PCD feature is marked `done`, and by `pcs-auditor` for read-only baseline audits of existing UI without a spec.
 
 ---
 

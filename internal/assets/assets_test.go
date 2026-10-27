@@ -82,8 +82,8 @@ func TestNativeAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NativeAgents() error: %v", err)
 	}
-	if len(agents) != 5 {
-		t.Fatalf("expected 5 native agents, got %d", len(agents))
+	if len(agents) != 6 {
+		t.Fatalf("expected 6 native agents, got %d", len(agents))
 	}
 
 	for _, agent := range agents {
@@ -99,13 +99,57 @@ func TestNativeAgents(t *testing.T) {
 				t.Errorf("agent %s missing engram MCP tool declaration", agent.RelPath)
 			}
 			// Read-only agents without Bash tool must never instruct running pcs codegraph init.
-			if agent.RelPath == "pcs-explorer.md" || agent.RelPath == "pcs-strategist.md" || agent.RelPath == "pcs-architect.md" {
+			if agent.RelPath == "pcs-explorer.md" || agent.RelPath == "pcs-strategist.md" || agent.RelPath == "pcs-architect.md" || agent.RelPath == "pcs-auditor.md" {
 				if strings.Contains(text, "pcs codegraph init") {
 					t.Errorf("read-only agent %s (without Bash tool) must not instruct running 'pcs codegraph init'", agent.RelPath)
 				}
 			}
 		})
 	}
+}
+
+func TestAuditorIsReadOnly(t *testing.T) {
+	agents, err := NativeAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range agents {
+		if agent.RelPath != "pcs-auditor.md" {
+			continue
+		}
+		text := string(agent.Content)
+		var tools, disallowed string
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(line)
+			if v, ok := strings.CutPrefix(line, "tools:"); ok {
+				tools = v
+			}
+			if v, ok := strings.CutPrefix(line, "disallowedTools:"); ok {
+				disallowed = v
+			}
+		}
+		toolSet := map[string]bool{}
+		for _, tool := range strings.Split(tools, ",") {
+			toolSet[strings.TrimSpace(tool)] = true
+		}
+		for _, mutating := range []string{"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "mcp__engram__mem_save"} {
+			if toolSet[mutating] {
+				t.Errorf("pcs-auditor must not declare %s in tools", mutating)
+			}
+		}
+		for _, blocked := range []string{"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"} {
+			if !strings.Contains(disallowed, blocked) {
+				t.Errorf("pcs-auditor disallowedTools lacks %s", blocked)
+			}
+		}
+		for _, want := range []string{"mcp__playwright__browser_navigate", "mcp__codegraph__codegraph_explore", "**Status**: success"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("pcs-auditor lacks %q", want)
+			}
+		}
+		return
+	}
+	t.Fatal("pcs-auditor.md not embedded")
 }
 
 func TestPromptSizeBudget(t *testing.T) {

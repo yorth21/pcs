@@ -36,7 +36,8 @@ This file is the authoritative registry of orchestrator blocks, native subagents
 | `pcs-strategist` | Planes 1 & 2 — Strategy & Scope | `opus` | `pcs/specs/{feature-name}.md` | `pcs/{feature-name}/strategy` | `brain/agents/pcs-strategist.md` |
 | `pcs-architect` | Planes 3 & 4 — Structure, Skeleton & Tasks | `opus` | `pcs/specs/{feature-name}.md`, `pcs/tasks/{feature-name}.md` | `pcs/{feature-name}/architecture`, `pcs/{feature-name}/tasks` | `brain/agents/pcs-architect.md` |
 | `pcs-builder` | Plane 5 — Surface & Component Composition | `sonnet` | Authorized `src/**`, `pcs/tasks/{feature-name}.md` | `pcs/{feature-name}/apply` | `brain/agents/pcs-builder.md` |
-| `pcs-verifier` | Transversal — Heuristics, A11y & Playwright | `sonnet` | `pcs/specs/{feature-name}.md` (Verification Report) | `pcs/{feature-name}/verify` | `brain/agents/pcs-verifier.md` |
+| `pcs-verifier` | Transversal — Post-Build Heuristics, A11y & Playwright | `sonnet` | `pcs/specs/{feature-name}.md` (Verification Report) | `pcs/{feature-name}/verify` | `brain/agents/pcs-verifier.md` |
+| `pcs-auditor` | Transversal — Baseline Audit of Existing UI (no spec) | `sonnet` | Read-Only (Coordinator persists `pcs/audits/{feature-name}.md`) | `pcs/{feature-name}/audit` | `brain/agents/pcs-auditor.md` |
 
 ---
 

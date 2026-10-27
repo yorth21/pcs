@@ -27,13 +27,14 @@ var AllPCSMarkers = []string{
 	MarkerUXRouting,
 }
 
-// NativeAgentNames lists the five canonical Product Composition System subagents.
+// NativeAgentNames lists the six canonical Product Composition System subagents.
 var NativeAgentNames = []string{
 	"pcs-explorer.md",
 	"pcs-strategist.md",
 	"pcs-architect.md",
 	"pcs-builder.md",
 	"pcs-verifier.md",
+	"pcs-auditor.md",
 }
 
 // SupportedAdapters lists the stack adapter names shipped in the embedded brain.
@@ -83,7 +84,7 @@ func SkillStyleGuide() ([]byte, error) {
 	return b, nil
 }
 
-// NativeAgents returns the five embedded native subagent markdown files.
+// NativeAgents returns the embedded native subagent markdown files.
 func NativeAgents() ([]FileEntry, error) {
 	entries := make([]FileEntry, 0, len(NativeAgentNames))
 	for _, name := range NativeAgentNames {
@@ -206,7 +207,7 @@ func EngramProtocolBlock() string {
 
 Engram (` + "`mcp__engram__*`" + `) provides persistent cross-session memory across compactions:
 1. **Session Detection**: Call ` + "`mem_current_project`" + ` with the workspace directory at session start and reuse the active session identity.
-2. **Dual PCD Persistence**: Every ` + "`pcs-*`" + ` phase mirrors its specification and task state to Engram under ` + "`pcs/{feature-name}/{explore|strategy|architecture|tasks|apply|verify}`" + ` (` + "`capture_prompt: false`" + `).
+2. **Dual PCD Persistence**: Every ` + "`pcs-*`" + ` phase mirrors its specification and task state to Engram under ` + "`pcs/{feature-name}/{explore|strategy|architecture|tasks|apply|verify|audit}`" + ` (` + "`capture_prompt: false`" + `).
 3. **Recovery & Delivery**: Before resuming or after compaction, reconcile ` + "`mem_context`" + ` / ` + "`mem_search`" + ` / ` + "`mem_get_observation`" + ` with on-disk ` + "`pcs/specs/`" + ` and ` + "`pcs/tasks/`" + `. Saving to Engram never replaces the user-facing reply.
 <!-- /pcs:engram-protocol -->`
 }

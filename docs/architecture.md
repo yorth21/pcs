@@ -1,6 +1,6 @@
 # Product Composition System (`pcs`) — Architecture Specification
 
-**Decision Summary:** `pcs` is a **100% standalone, self-contained Product, UX/UI & Frontend Engineering Orchestrator and Go CLI**. It owns both the **Product-Centered Development (PCD)** brain (orchestrator, 5 native UX/UI subagents, the technology-agnostic `pcs-core` methodology skill, and pluggable frontend stack adapters such as `pcs-adapter-react-shadcn`) and the direct runtime wiring for persistent memory (`Engram`), structural code intelligence (`CodeGraph`), live documentation retrieval (`Context7`), persona, and runtime security boundaries.
+**Decision Summary:** `pcs` is a **100% standalone, self-contained Product, UX/UI & Frontend Engineering Orchestrator and Go CLI**. It owns both the **Product-Centered Development (PCD)** brain (orchestrator, 6 native UX/UI subagents, the technology-agnostic `pcs-core` methodology skill, and pluggable frontend stack adapters such as `pcs-adapter-react-shadcn`) and the direct runtime wiring for persistent memory (`Engram`), structural code intelligence (`CodeGraph`), live documentation retrieval (`Context7`), persona, and runtime security boundaries.
 
 ---
 
@@ -57,7 +57,7 @@ flowchart TB
 | Live Library Documentation | `pcs` (Layer 1) | `mcp__context7__*` | Verifies up-to-date API signatures for UI primitives, routers, and form libraries |
 | Voice, Language & Safety | `pcs` (Layer 1) | `<!-- pcs:persona -->`, `<!-- pcs:agent-language-contract -->`, `<!-- pcs:remote-authorization -->` | Separates conversational tone from the strict English Artifact Language Contract |
 | UX Orchestration & Routing | `pcs` (Layer 2) | `<!-- pcs:orchestrator -->`, `<!-- pcs:ux-routing -->` | Routes every UI request through Product-Centered Development (PCD) |
-| 5-Plane Product Execution | `pcs` (Layer 2) | `pcs-explorer`, `pcs-strategist`, `pcs-architect`, `pcs-builder`, `pcs-verifier` | Executes discovery, strategy/scope, structure/skeleton, surface build, and heuristic audit |
+| 5-Plane Product Execution | `pcs` (Layer 2) | `pcs-explorer`, `pcs-strategist`, `pcs-architect`, `pcs-builder`, `pcs-verifier`, `pcs-auditor` | Executes discovery, strategy/scope, structure/skeleton, surface build, post-build verification, and read-only baseline audits of existing UI |
 | Agnostic UX Rules | `pcs` (Layer 2) | `brain/skills/pcs-core/` | Encodes the 5 Planes of UX, OOUX ORCA, HTA/KLM, Cognitive Laws, and 10 Heuristics |
 | Stack-Specific Composition | `pcs` (Layer 2) | `brain/skills/pcs-adapter-react-shadcn/` | Maps Skeleton decisions to React 19, vanilla `shadcn/ui`, TanStack, RHF/Zod, and Tailwind v4 |
 
@@ -114,6 +114,7 @@ To guarantee both **human-reviewable Git traceability** and **cross-session AI m
 | `pcs-architect` | `pcs/tasks/{feature-name}.md` | `pcs/{feature-name}/tasks` | Ordered implementation work units, allowed edit surfaces per unit, verification gates |
 | `pcs-builder` | `pcs/tasks/{feature-name}.md` (updated checkboxes) | `pcs/{feature-name}/apply` | Implemented component paths, state coverage proof, work-unit progress |
 | `pcs-verifier` | `pcs/specs/{feature-name}.md` (Verification section) | `pcs/{feature-name}/verify` | 10 Heuristic scores (0–4), 4-Question Cognitive Walkthrough, A11y & Playwright findings |
+| `pcs-auditor` (persisted by the Coordinator) | `pcs/audits/{feature-name}.md` | `pcs/{feature-name}/audit` | Baseline Audit Report of existing UI: 10 Heuristic scores (0–4), 5 Negative States checklist, Cognitive Walkthrough, WCAG/keyboard findings, ordered fixes, Severity 3–4 verdict |
 
 All automated `mem_save` calls inside `pcs` phases set `capture_prompt: false` (when supported by the active Engram schema) so pipeline artifacts do not pollute human prompt capture.
 
