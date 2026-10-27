@@ -3,7 +3,9 @@ package doctor
 import (
 	"fmt"
 	"github.com/yorth21/pcs/internal/mcp"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yorth21/pcs/internal/installer"
@@ -163,5 +165,42 @@ func TestDoctorProfileScopeChecks(t *testing.T) {
 	}
 	if !foundAuth {
 		t.Errorf("expected authentication check for profile")
+	}
+}
+
+func TestDoctorReportsFlowHooks(t *testing.T) {
+	home := isolateDoctorEnv(t)
+	bin := filepath.Join(home, "bin", "pcs.exe")
+	orig := installer.ExecutableFunc
+	installer.ExecutableFunc = func() (string, error) { return bin, nil }
+	t.Cleanup(func() { installer.ExecutableFunc = orig })
+	target := installProfile(t, home, false)
+
+	run := func() CheckResult {
+		t.Helper()
+		rep, err := Run(Options{Scope: installer.ScopeProfile, TargetDir: target, HomeDir: home, LookPathFunc: lookPathAll})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, ok := findCheck(t, rep, "profile", "flow-hooks")
+		if !ok {
+			t.Fatal("flow-hooks check missing")
+		}
+		return c
+	}
+	if c := run(); c.Status != "warn" || !strings.Contains(c.Detail, "does not exist") {
+		t.Fatalf("missing binary check = %+v", c)
+	}
+	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if c := run(); c.Status != "ok" || !strings.Contains(c.Detail, "PreToolUse") {
+		t.Fatalf("present check = %+v", c)
+	}
+	if _, err := mcp.RemoveFlowHooks(filepath.Join(target, "settings.json"), bin); err != nil {
+		t.Fatal(err)
+	}
+	if c := run(); c.Status != "warn" || !strings.Contains(c.Detail, "missing PreToolUse") {
+		t.Fatalf("removed check = %+v", c)
 	}
 }

@@ -125,6 +125,8 @@ func runInstall(args []string, env Env) int {
 	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into the claude-pcs launchers: split on whitespace, single or double quotes group words, no escape character; every value is passed literally")
 	withPlugins := fs.Bool("with-plugins", false, "Add the engram marketplace and install the engram@engram plugin into the profile via the claude CLI (remembered by sync)")
 	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json (remembered by sync)")
+	withHooks := fs.Bool("with-hooks", false, "Write the pcs flow hooks (PreToolUse, SubagentStop, Stop, UserPromptSubmit) into settings.json; default on for --scope profile only (remembered by sync)")
+	noHooks := fs.Bool("no-hooks", false, "Do not write the pcs flow hooks into settings.json (remembered by sync)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned actions without writing files")
 	asJSON := fs.Bool("json", false, "Output installation report as JSON")
 
@@ -132,6 +134,10 @@ func runInstall(args []string, env Env) int {
 		return 2
 	}
 	overrides := visitedFlags(fs)
+	flowHooks, ok := flowHooksChoice(overrides, *withHooks, *noHooks, "install", env)
+	if !ok {
+		return 2
+	}
 	chosenScope := profileDirImpliesProfile(*scope, overrides)
 	if *profileAlias {
 		chosenScope = installer.ScopeProfile
@@ -178,6 +184,7 @@ func runInstall(args []string, env Env) int {
 		LauncherArgs:    *launcherArgs,
 		WithPlugins:     *withPlugins,
 		NoStatusLine:    *noStatusLine,
+		FlowHooks:       flowHooks,
 		DryRun:          *dryRun,
 		FlagOverrides:   overrides,
 	})
@@ -210,6 +217,8 @@ func runSync(args []string, env Env) int {
 	launcherArgs := fs.String("launcher-args", "", "Default arguments baked into the claude-pcs launchers: split on whitespace, single or double quotes group words, no escape character; every value is passed literally")
 	withPlugins := fs.Bool("with-plugins", false, "Add the engram marketplace and install the engram@engram plugin into the profile via the claude CLI (remembered by sync)")
 	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json (remembered by sync)")
+	withHooks := fs.Bool("with-hooks", false, "Write the pcs flow hooks into settings.json (remembered by sync)")
+	noHooks := fs.Bool("no-hooks", false, "Remove or do not write the pcs flow hooks in settings.json (remembered by sync)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned sync actions without writing files")
 	asJSON := fs.Bool("json", false, "Output sync report as JSON")
 
@@ -217,6 +226,10 @@ func runSync(args []string, env Env) int {
 		return 2
 	}
 	overrides := visitedFlags(fs)
+	flowHooks, ok := flowHooksChoice(overrides, *withHooks, *noHooks, "sync", env)
+	if !ok {
+		return 2
+	}
 	chosenScope := ""
 	if overrides["scope"] {
 		chosenScope = *scope
@@ -265,6 +278,7 @@ func runSync(args []string, env Env) int {
 		LauncherArgs:    *launcherArgs,
 		WithPlugins:     *withPlugins,
 		NoStatusLine:    *noStatusLine,
+		FlowHooks:       flowHooks,
 		DryRun:          *dryRun,
 		FlagOverrides:   overrides,
 	})
@@ -384,6 +398,27 @@ func runStatus(args []string, env Env) int {
 	printBoolMap(env.Stdout, "Skills", rep.Skills)
 	printBoolMap(env.Stdout, "MCP Servers", rep.MCPServers)
 	return 0
+}
+
+// flowHooksChoice maps --with-hooks/--no-hooks onto installer.Options.FlowHooks:
+// nil when neither flag was passed (scope default, or the saved choice on sync).
+func flowHooksChoice(visited map[string]bool, withHooks, noHooks bool, cmd string, env Env) (*bool, bool) {
+	with := visited["with-hooks"] && withHooks
+	without := visited["no-hooks"] && noHooks
+	switch {
+	case with && without:
+		fmt.Fprintf(env.Stderr, "pcs %s: --with-hooks and --no-hooks are mutually exclusive\n", cmd)
+		return nil, false
+	case with:
+		return installer.BoolPtr(true), true
+	case without:
+		return installer.BoolPtr(false), true
+	case visited["with-hooks"]:
+		return installer.BoolPtr(false), true
+	case visited["no-hooks"]:
+		return installer.BoolPtr(true), true
+	}
+	return nil, true
 }
 
 // profileDirImpliesProfile returns the profile scope when --profile-dir was given
@@ -760,6 +795,8 @@ Key Flags (install / sync / uninstall / status):
   --mcp-guidance=true|false          Inject pcs:codegraph-guidance and pcs:engram-protocol into CLAUDE.md (default: true)
   --write-mcp-config                 Write missing engram, context7, and codegraph MCP entries into .claude.json and settings.json (default: false)
   --write-hook                       Write UserPromptSubmit skill-registry refresh hook into settings.json (default: false)
+  --with-hooks / --no-hooks          Write or skip the pcs flow hooks (pcs hook <event>) in settings.json
+                                     (default: on for --scope profile, off otherwise; remembered by sync)
   --remove-mcp                       (uninstall) Remove only the MCP servers, permissions, and plugins pcs recorded as added
   --force                            (uninstall) With --remove-mcp and no install record, remove the default MCP entries anyway
                                      (requires --scope, --profile-dir, or --target-dir on the command line)

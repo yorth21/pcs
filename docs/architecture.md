@@ -154,6 +154,16 @@ All automated `mem_save` calls inside `pcs` phases set `capture_prompt: false` (
 - `--mcp-guidance=true` (default `true`): Injects `<!-- pcs:codegraph-guidance -->` and `<!-- pcs:engram-protocol -->` into `CLAUDE.md` alongside `<!-- pcs:persona -->`, `<!-- pcs:orchestrator -->`, and `<!-- pcs:ux-routing -->`. Setting `--mcp-guidance=false` omits or actively removes those two MCP prompt blocks.
 - `--write-mcp-config` (default `false`): Atomically merges only missing MCP servers (`engram`, `context7`, `codegraph`) into `.claude.json` (never overwriting pre-existing server definitions) and adds missing MCP permissions/plugins into `settings.json` with one-time `.pre-pcs.bak` backups and delta tracking in `.pcs-state.json`.
 - `--write-hook` (default `false`): Adds the `UserPromptSubmit` hook (`pcs skill-registry refresh`) into `settings.json`.
+- `--with-hooks` / `--no-hooks` (default: on for `--scope profile`, off otherwise; remembered by `pcs sync`): Writes the PCD flow hooks into `settings.json`. Each command is the absolute path of the running `pcs` binary in Git Bash form (for example `"%LOCALAPPDATA%/pcs/bin/pcs.exe" hook stop` rendered as an absolute forward-slash path, or `"/usr/local/bin/pcs" hook stop`); pcs warns when that binary lives in a temporary directory. The merge replaces only pcs flow hook commands (identified by `pcs hook <event>` or the binary recorded in `.pcs-state.json` as `flow_hook_binary`), preserves every other hook, and `pcs uninstall` removes exactly those entries. `pcs doctor --scope profile` reports the `flow-hooks` check.
+
+| Hook event | Matcher | Command | Effect |
+|------------|---------|---------|--------|
+| `PreToolUse` | `Read\|Grep\|Glob\|Bash\|Edit\|Write\|MultiEdit\|NotebookEdit\|Agent\|Task` | `pcs hook pre-tool-use` | Subagent calls (non-empty `agent_id`) pass. Main-thread reads of project source and non-allowlisted `Bash` are denied without an active flow, counted against the 3-read budget of an `inline` flow, and denied with the next delegation in `audit`/`t2`/`t3` flows. Edits are allowed only for the single file of an `inline` flow (and under `pcs/` or `.atl/`); `.pcs/` is CLI-owned. `pcs-*` delegations are denied without a flow or before their prerequisite phases are done |
+| `SubagentStop` | — | `pcs hook subagent-stop` | Maps a `pcs-*` agent to its phase and records `done` (`done`/`success`/`partial`), `blocked`, or `unverified` (no Return Envelope status) |
+| `Stop` | — | `pcs hook stop` | Blocks the turn while the active flow has pending phases, and once more to require `pcs flow close`; never blocks when `stop_hook_active` is true |
+| `UserPromptSubmit` | — | `pcs hook user-prompt-submit` | Injects the start rule (no flow) or the active flow's status and next step |
+
+Flow kinds and their mandatory ordered phases (`pcs flow start --kind ...`): `audit` = `explore` (`pcs-explorer`) -> `audit` (`pcs-auditor` or `pcs-verifier`); `inline` = no delegated phases, main-thread budget of 3 counted reads and 1 edited file; `t2` and `t3` = `explore` -> `strategy` (`pcs-strategist`) -> `architecture` (`pcs-architect`) -> `apply` (`pcs-builder`) -> `verify` (`pcs-verifier`).
 
 | MCP Server | Configured Command | `settings.json` Permissions & Plugins |
 |------------|--------------------|---------------------------------------|

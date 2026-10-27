@@ -353,3 +353,30 @@ func TestCLIFlowAndHookRouting(t *testing.T) {
 		t.Fatalf("unknown hook event exit = %d", code)
 	}
 }
+
+func TestFlowHooksChoice(t *testing.T) {
+	var errb bytes.Buffer
+	env := Env{Stderr: &errb}
+	tests := []struct {
+		visited    map[string]bool
+		with, no   bool
+		want       *bool
+		wantResult bool
+	}{
+		{visited: map[string]bool{}, wantResult: true},
+		{visited: map[string]bool{"with-hooks": true}, with: true, want: boolp(true), wantResult: true},
+		{visited: map[string]bool{"no-hooks": true}, no: true, want: boolp(false), wantResult: true},
+		{visited: map[string]bool{"with-hooks": true, "no-hooks": true}, with: true, no: true, wantResult: false},
+	}
+	for i, tc := range tests {
+		got, ok := flowHooksChoice(tc.visited, tc.with, tc.no, "install", env)
+		if ok != tc.wantResult || (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Errorf("case %d: got %v %v", i, got, ok)
+		}
+	}
+	if !strings.Contains(errb.String(), "mutually exclusive") {
+		t.Fatalf("stderr = %q", errb.String())
+	}
+}
+
+func boolp(b bool) *bool { return &b }

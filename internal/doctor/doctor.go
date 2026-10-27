@@ -260,6 +260,9 @@ func Run(opts Options) (*DiagnosticReport, error) {
 				}
 			}
 
+			// Profile check 3b: pcs flow hooks that enforce the PCD flow.
+			addFlowHooksCheck(addCheck, status.SettingsJSONPath, status.State)
+
 			// Profile check 4: authentication check (file existence only, never read credentials)
 			credsPath := filepath.Join(targetDir, ".credentials.json")
 			switch _, err := os.Stat(credsPath); {
@@ -291,6 +294,42 @@ func addEngramSourceCheck(addCheck func(cat, name, status, detail string), share
 	}
 	addCheck("profile", "engram", "error", fmt.Sprintf("no Engram source for the profile %s: %s has no engram MCP server and %s is not enabled in %s. Install engram (%s) and run 'pcs sync --scope profile', or run 'pcs sync --scope profile --with-plugins'",
 		targetDir, sharedMCP, installer.EngramPlugin, settingsPath, installer.EngramProjectURL))
+}
+
+// addFlowHooksCheck reports whether the pcs flow hooks (pcs hook <event>) are
+// present in the profile settings.json and run an existing pcs binary. Hooks
+// disabled with --no-hooks report ok.
+func addFlowHooksCheck(addCheck func(cat, name, status, detail string), settingsPath string, state *installer.State) {
+	if state != nil && state.FlowHooks != nil && !*state.FlowHooks {
+		addCheck("profile", "flow-hooks", "ok", "disabled (installed with --no-hooks); the PCD flow is not enforced")
+		return
+	}
+	binary := ""
+	if state != nil {
+		binary = state.FlowHookBinary
+	}
+	present, _, err := mcp.InspectFlowHooks(settingsPath, binary)
+	if err != nil {
+		addCheck("profile", "flow-hooks", "warn", fmt.Sprintf("cannot read %s: %v", settingsPath, err))
+		return
+	}
+	var missing []string
+	for _, spec := range mcp.FlowHookSpecs {
+		if !present[spec.Event] {
+			missing = append(missing, spec.Event)
+		}
+	}
+	if len(missing) > 0 {
+		addCheck("profile", "flow-hooks", "warn", fmt.Sprintf("missing %s in %s. Run 'pcs sync --scope profile --with-hooks'", strings.Join(missing, ", "), settingsPath))
+		return
+	}
+	if binary != "" {
+		if _, err := os.Stat(binary); err != nil {
+			addCheck("profile", "flow-hooks", "warn", fmt.Sprintf("hooks run %s, which does not exist; run 'pcs sync --scope profile' from the installed pcs binary", filepath.ToSlash(binary)))
+			return
+		}
+	}
+	addCheck("profile", "flow-hooks", "ok", fmt.Sprintf("PreToolUse, SubagentStop, Stop, UserPromptSubmit present in %s", settingsPath))
 }
 
 func inferScope(targetDir string) string {

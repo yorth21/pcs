@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -68,6 +69,9 @@ type UnmergeDelta struct {
 	AddedPermissions    []string
 	AddedPlugins        []string
 	AddedHook           bool
+	// FlowHookBinary is the recorded pcs binary of the flow hooks, so hooks
+	// running a renamed binary are still removed.
+	FlowHookBinary string
 	// ForceRemoveAllMCP additionally removes the default pcs servers, permissions,
 	// and engram@engram plugin even when they were not recorded as pcs-added. It
 	// must only be set on explicit user request (uninstall --remove-mcp --force).
@@ -321,7 +325,7 @@ func UnmergeWithDelta(claudeJSONPath, settingsJSONPath string, delta UnmergeDelt
 			return err
 		}
 		if existed {
-			changed := removePCSHooks(root)
+			changed := removePCSHooks(root, []string{delta.FlowHookBinary})
 			if len(permsToRemove) > 0 {
 				if perms, ok := root["permissions"].(map[string]any); ok {
 					existing := ensureStringSlice(perms, "allow")
@@ -477,16 +481,17 @@ func ensureSkillRegistryHook(hooks map[string]any, targetDir string) bool {
 	return true
 }
 
-func removePCSHooks(root map[string]any) bool {
+func removePCSHooks(root map[string]any, flowHookBinaries []string) bool {
+	flowChanged := removeFlowHooks(root, flowHookBinaries)
 	hooks, ok := root["hooks"].(map[string]any)
 	if !ok {
-		return false
+		return flowChanged
 	}
 	rawList, ok := hooks["UserPromptSubmit"].([]any)
 	if !ok {
-		return false
+		return flowChanged
 	}
-	changed := false
+	changed := flowChanged
 	filtered := make([]any, 0, len(rawList))
 	for _, item := range rawList {
 		text := fmt.Sprint(item)
@@ -780,4 +785,201 @@ func SharedMCPDrift(sharedMCPPath, mainClaudeJSONPath string) ([]string, error) 
 	}
 	slices.Sort(drift)
 	return drift, nil
+}
+
+// FlowHookSpec describes one pcs flow hook entry in settings.json.
+type FlowHookSpec struct {
+	Event   string // Claude Code hook event, e.g. "PreToolUse"
+	Matcher string // tool matcher; empty for events without tools
+	Arg     string // pcs hook argument, e.g. "pre-tool-use"
+}
+
+// FlowHookTimeoutSeconds bounds every pcs flow hook invocation.
+const FlowHookTimeoutSeconds = 15
+
+// FlowHookSpecs lists the pcs flow hooks in install order.
+var FlowHookSpecs = []FlowHookSpec{
+	{Event: "PreToolUse", Matcher: "Read|Grep|Glob|Bash|Edit|Write|MultiEdit|NotebookEdit|Agent|Task", Arg: "pre-tool-use"},
+	{Event: "SubagentStop", Arg: "subagent-stop"},
+	{Event: "Stop", Arg: "stop"},
+	{Event: "UserPromptSubmit", Arg: "user-prompt-submit"},
+}
+
+// flowHookCommandPattern identifies a pcs flow hook command: a pcs binary
+// (optionally quoted, any path) followed by `hook <event>`.
+var flowHookCommandPattern = regexp.MustCompile(`(?i)(^|[\/"\s])pcs(\.exe)?"?\s+hook\s+(pre-tool-use|subagent-stop|stop|user-prompt-submit)\s*$`)
+
+// IsFlowHookCommand reports whether command is a pcs flow hook command: a pcs
+// binary followed by `hook <event>`, or the exact command pcs renders for one
+// of the recorded binaries (which may be named differently).
+func IsFlowHookCommand(command string, binaries ...string) bool {
+	command = strings.TrimSpace(command)
+	if flowHookCommandPattern.MatchString(command) {
+		return true
+	}
+	for _, bin := range binaries {
+		if strings.TrimSpace(bin) == "" {
+			continue
+		}
+		for _, spec := range FlowHookSpecs {
+			if command == FlowHookCommand(bin, spec.Arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// FlowHookCommand renders the hook command for binary and arg in Git Bash
+// shell form: a double-quoted forward-slash path followed by `hook <arg>`.
+func FlowHookCommand(binary, arg string) string {
+	return fmt.Sprintf("\"%s\" hook %s", filepath.ToSlash(binary), arg)
+}
+
+// MergeFlowHooks replaces every pcs flow hook in settings.json with fresh
+// entries for binary, preserving all other hooks. It writes the file only when
+// the result differs, taking a one-time .pre-pcs.bak backup of an existing file
+// when backup is true. It reports whether the file changed and whether it was
+// created.
+//
+// previous lists binaries recorded by an earlier install whose hooks are
+// replaced as well.
+func MergeFlowHooks(path, binary string, backup bool, previous ...string) (changed, created bool, err error) {
+	root, existed, rawExisting, perm, err := readJSONObjectWithPerm(path, 0o644)
+	if err != nil {
+		return false, false, fmt.Errorf("read %s: %w", path, err)
+	}
+	before, _ := json.Marshal(root)
+	removeFlowHooks(root, append([]string{binary}, previous...))
+	hooks := ensureMap(root, "hooks")
+	for _, spec := range FlowHookSpecs {
+		list, _ := hooks[spec.Event].([]any)
+		entry := map[string]any{
+			"hooks": []any{map[string]any{
+				"type":    "command",
+				"command": FlowHookCommand(binary, spec.Arg),
+				"timeout": FlowHookTimeoutSeconds,
+			}},
+		}
+		if spec.Matcher != "" {
+			entry["matcher"] = spec.Matcher
+		}
+		hooks[spec.Event] = append(list, entry)
+	}
+	after, _ := json.Marshal(root)
+	if existed && string(before) == string(after) {
+		return false, false, nil
+	}
+	if existed && backup {
+		if err := WritePrePCSBackupOnce(path, rawExisting, perm); err != nil {
+			return false, false, err
+		}
+	}
+	if err := writeJSONAtomicWithPerm(path, root, perm); err != nil {
+		return false, false, err
+	}
+	return true, !existed, nil
+}
+
+// RemoveFlowHooks removes every pcs flow hook (see IsFlowHookCommand) from
+// settings.json, preserving all other hooks. A missing file is not an error.
+func RemoveFlowHooks(path string, binaries ...string) (bool, error) {
+	root, existed, _, perm, err := readJSONObjectWithPerm(path, 0o644)
+	if err != nil || !existed {
+		return false, err
+	}
+	if !removeFlowHooks(root, binaries) {
+		return false, nil
+	}
+	return true, writeJSONAtomicWithPerm(path, root, perm)
+}
+
+// InspectFlowHooks reports, per hook event, whether settings.json holds a pcs
+// flow hook, plus the command of each one found.
+func InspectFlowHooks(path string, binaries ...string) (map[string]bool, []string, error) {
+	present := make(map[string]bool, len(FlowHookSpecs))
+	for _, spec := range FlowHookSpecs {
+		present[spec.Event] = false
+	}
+	root, existed, _, _, err := readJSONObjectWithPerm(path, 0o644)
+	if err != nil || !existed {
+		return present, nil, err
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	var commands []string
+	for _, spec := range FlowHookSpecs {
+		list, _ := hooks[spec.Event].([]any)
+		for _, group := range list {
+			for _, cmd := range groupCommands(group) {
+				if IsFlowHookCommand(cmd, binaries...) && strings.HasSuffix(strings.TrimSpace(cmd), " "+spec.Arg) {
+					present[spec.Event] = true
+					commands = append(commands, cmd)
+				}
+			}
+		}
+	}
+	return present, commands, nil
+}
+
+func groupCommands(group any) []string {
+	g, _ := group.(map[string]any)
+	inner, _ := g["hooks"].([]any)
+	var out []string
+	for _, h := range inner {
+		if m, ok := h.(map[string]any); ok {
+			if c, ok := m["command"].(string); ok {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+// removeFlowHooks strips pcs flow hook commands from every event in root,
+// dropping matcher groups and events left empty and an empty hooks map.
+func removeFlowHooks(root map[string]any, binaries []string) bool {
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for event, rawList := range hooks {
+		list, ok := rawList.([]any)
+		if !ok {
+			continue
+		}
+		var keptGroups []any
+		for _, group := range list {
+			g, ok := group.(map[string]any)
+			inner, innerOK := g["hooks"].([]any)
+			if !ok || !innerOK {
+				keptGroups = append(keptGroups, group)
+				continue
+			}
+			var keptInner []any
+			for _, h := range inner {
+				if m, ok := h.(map[string]any); ok {
+					if c, ok := m["command"].(string); ok && IsFlowHookCommand(c, binaries...) {
+						changed = true
+						continue
+					}
+				}
+				keptInner = append(keptInner, h)
+			}
+			if len(keptInner) == 0 {
+				continue
+			}
+			g["hooks"] = keptInner
+			keptGroups = append(keptGroups, g)
+		}
+		if len(keptGroups) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = keptGroups
+		}
+	}
+	if len(hooks) == 0 {
+		delete(root, "hooks")
+	}
+	return changed
 }

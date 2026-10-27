@@ -265,3 +265,109 @@ func TestMergeSettingsJSONAndUnmergeWithDelta(t *testing.T) {
 		t.Errorf("expected pre-existing permission mcp__engram__* to survive UnmergeWithDelta")
 	}
 }
+
+const foreignSettings = `{
+  "hooks": {
+    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "herdr session-start"}]}],
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "notify-done"}]}]
+  },
+  "theme": "dark"
+}
+`
+
+func TestMergeFlowHooksPreservesForeignHooksAndIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte(foreignSettings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := `C:\Users\x\AppData\Local\pcs\bin\pcs.exe`
+	changed, created, err := MergeFlowHooks(path, bin, true)
+	if err != nil || !changed || created {
+		t.Fatalf("first merge = %v %v %v", changed, created, err)
+	}
+	if _, err := os.Stat(path + PrePCSBackupSuffix); err != nil {
+		t.Fatalf("backup missing: %v", err)
+	}
+	present, cmds, err := InspectFlowHooks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range FlowHookSpecs {
+		if !present[spec.Event] {
+			t.Fatalf("%s hook missing", spec.Event)
+		}
+	}
+	if !slices.Contains(cmds, `"C:/Users/x/AppData/Local/pcs/bin/pcs.exe" hook stop`) {
+		t.Fatalf("commands = %v", cmds)
+	}
+	first, _ := os.ReadFile(path)
+	if changed, _, err := MergeFlowHooks(path, bin, true); err != nil || changed {
+		t.Fatalf("second merge changed=%v err=%v", changed, err)
+	}
+	if again, _ := os.ReadFile(path); string(again) != string(first) {
+		t.Fatal("idempotent merge rewrote the file")
+	}
+	// Re-rendering with a new binary replaces, never duplicates.
+	if changed, _, _ := MergeFlowHooks(path, "/opt/pcs/pcs", true); !changed {
+		t.Fatal("binary change not applied")
+	}
+	_, cmds, _ = InspectFlowHooks(path)
+	if len(cmds) != len(FlowHookSpecs) || !strings.HasPrefix(cmds[0], `"/opt/pcs/pcs" hook`) {
+		t.Fatalf("re-rendered commands = %v", cmds)
+	}
+	var root map[string]any
+	b, _ := os.ReadFile(path)
+	json.Unmarshal(b, &root)
+	pre := root["hooks"].(map[string]any)["PreToolUse"].([]any)[0].(map[string]any)
+	if !strings.Contains(pre["matcher"].(string), "Bash") || !strings.Contains(pre["matcher"].(string), "Agent") {
+		t.Fatalf("PreToolUse matcher = %v", pre["matcher"])
+	}
+
+	if removed, err := RemoveFlowHooks(path); err != nil || !removed {
+		t.Fatalf("remove = %v %v", removed, err)
+	}
+	var after, want map[string]any
+	b, _ = os.ReadFile(path)
+	json.Unmarshal(b, &after)
+	json.Unmarshal([]byte(foreignSettings), &want)
+	gotJSON, _ := json.Marshal(after)
+	wantJSON, _ := json.Marshal(want)
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("after remove = %s, want %s", gotJSON, wantJSON)
+	}
+	if removed, _ := RemoveFlowHooks(path); removed {
+		t.Fatal("second remove reported a change")
+	}
+}
+
+func TestUnmergeRemovesFlowHooksAndPrunesCreatedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	_, created, err := MergeFlowHooks(path, "/opt/pcs/pcs", false)
+	if err != nil || !created {
+		t.Fatalf("merge = %v %v", created, err)
+	}
+	if err := UnmergeWithDelta("", path, UnmergeDelta{CreatedSettingsJSON: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("settings.json created by pcs still present: %v", err)
+	}
+}
+
+func TestIsFlowHookCommand(t *testing.T) {
+	for cmd, want := range map[string]bool{
+		`"C:/x/pcs.exe" hook pre-tool-use`: true,
+		`/usr/local/bin/pcs hook stop`:     true,
+		`pcs hook user-prompt-submit`:      true,
+		`"/a b/pcs" hook subagent-stop`:    true,
+		`pcs skill-registry refresh`:       false,
+		`mypcs hook stop`:                  false,
+		`pcs hook stop && rm -rf x`:        false,
+		`herdr hook stop`:                  false,
+	} {
+		if got := IsFlowHookCommand(cmd); got != want {
+			t.Errorf("IsFlowHookCommand(%q) = %v, want %v", cmd, got, want)
+		}
+	}
+}

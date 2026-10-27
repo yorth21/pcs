@@ -642,3 +642,157 @@ func TestProfileScopeLauncherIsolationAndSharedMCP(t *testing.T) {
 		t.Errorf("main profile .claude.json modified after uninstall!\ngot:  %s\nwant: %s", string(finalMainJSON), mainClaudeJSONContent)
 	}
 }
+
+// testHookBinary is a stable (non-temporary) pcs path the flow hooks reference
+// in tests, so installs never point settings.json at the test binary.
+var testHookBinary = filepath.Join(string(filepath.Separator)+"opt", "pcs-test", "bin", "pcs")
+
+func init() {
+	if abs, err := filepath.Abs(testHookBinary); err == nil {
+		testHookBinary = abs
+	}
+	ExecutableFunc = func() (string, error) { return testHookBinary, nil }
+}
+
+func TestProfileInstallWritesFlowHooksByDefault(t *testing.T) {
+	home := isolateEnv(t)
+	target := filepath.Join(home, ".claude-pcs")
+	settings := filepath.Join(target, "settings.json")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := `{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"herdr session-start"}]}]}}`
+	if err := os.WriteFile(settings, []byte(foreign), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mainSnapshot := snapshotTree(t, filepath.Join(home, ".claude"))
+
+	rep, err := Install(Options{Scope: ScopeProfile, HomeDir: home, LauncherDir: filepath.Join(home, "bin"), NoStatusLine: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.FlowHooks || strings.Contains(strings.Join(rep.Warnings, "\n"), "flow hooks") {
+		t.Fatalf("report flow_hooks=%v warnings=%v", rep.FlowHooks, rep.Warnings)
+	}
+	present, cmds, err := mcp.InspectFlowHooks(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range mcp.FlowHookSpecs {
+		if !present[spec.Event] {
+			t.Fatalf("%s hook missing", spec.Event)
+		}
+	}
+	wantCmd := mcp.FlowHookCommand(testHookBinary, "stop")
+	if !strings.Contains(strings.Join(cmds, "\n"), wantCmd) {
+		t.Fatalf("commands %v lack %s", cmds, wantCmd)
+	}
+	st, err := readState(filepath.Join(target, StateFileName))
+	if err != nil || st.FlowHooks == nil || !*st.FlowHooks || !st.AddedFlowHooks || st.FlowHookBinary != testHookBinary {
+		t.Fatalf("state = %+v, %v", st, err)
+	}
+
+	// Sync is idempotent and keeps exactly one copy of each hook.
+	if _, err := Sync(Options{Scope: ScopeProfile, HomeDir: home, FlagOverrides: map[string]bool{"scope": true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, cmds, _ := mcp.InspectFlowHooks(settings); len(cmds) != len(mcp.FlowHookSpecs) {
+		t.Fatalf("after sync commands = %v", cmds)
+	}
+
+	// Sync re-renders hooks for a moved binary, replacing the old ones.
+	moved, _ := filepath.Abs(filepath.Join(string(filepath.Separator)+"srv", "tools", "pcs-renamed"))
+	ExecutableFunc = func() (string, error) { return moved, nil }
+	t.Cleanup(func() { ExecutableFunc = func() (string, error) { return testHookBinary, nil } })
+	if _, err := Sync(Options{Scope: ScopeProfile, HomeDir: home, FlagOverrides: map[string]bool{"scope": true}}); err != nil {
+		t.Fatal(err)
+	}
+	_, cmds, _ = mcp.InspectFlowHooks(settings, moved)
+	if len(cmds) != len(mcp.FlowHookSpecs) || !strings.Contains(cmds[0], "pcs-renamed") {
+		t.Fatalf("re-rendered commands = %v", cmds)
+	}
+
+	if _, err := Uninstall(Options{Scope: ScopeProfile, HomeDir: home}); err != nil {
+		t.Fatal(err)
+	}
+	root := readSettings(t, target)
+	hooks, _ := root["hooks"].(map[string]any)
+	if len(hooks) != 1 || hooks["SessionStart"] == nil {
+		t.Fatalf("hooks after uninstall = %v (foreign hook must survive alone)", hooks)
+	}
+	if after := snapshotTree(t, filepath.Join(home, ".claude")); len(after) != len(mainSnapshot) {
+		t.Fatal("main ~/.claude profile changed")
+	}
+}
+
+func TestFlowHooksOptOutAndOtherScopes(t *testing.T) {
+	t.Run("profile --no-hooks writes none and sync remembers it", func(t *testing.T) {
+		home := isolateEnv(t)
+		target := filepath.Join(home, ".claude-pcs")
+		settings := filepath.Join(target, "settings.json")
+		if _, err := Install(Options{Scope: ScopeProfile, HomeDir: home, LauncherDir: filepath.Join(home, "bin"), NoStatusLine: true, FlowHooks: BoolPtr(false)}); err != nil {
+			t.Fatal(err)
+		}
+		if present, _, _ := mcp.InspectFlowHooks(settings); present["Stop"] {
+			t.Fatal("hooks written despite --no-hooks")
+		}
+		if _, err := Sync(Options{Scope: ScopeProfile, HomeDir: home, FlagOverrides: map[string]bool{"scope": true}}); err != nil {
+			t.Fatal(err)
+		}
+		if present, _, _ := mcp.InspectFlowHooks(settings); present["Stop"] {
+			t.Fatal("sync re-enabled hooks")
+		}
+		// Enabling later, then disabling with sync, removes them again.
+		if _, err := Sync(Options{Scope: ScopeProfile, HomeDir: home, FlowHooks: BoolPtr(true), FlagOverrides: map[string]bool{"scope": true}}); err != nil {
+			t.Fatal(err)
+		}
+		if present, _, _ := mcp.InspectFlowHooks(settings); !present["Stop"] {
+			t.Fatal("sync --with-hooks did not write hooks")
+		}
+		if _, err := Sync(Options{Scope: ScopeProfile, HomeDir: home, FlowHooks: BoolPtr(false), FlagOverrides: map[string]bool{"scope": true}}); err != nil {
+			t.Fatal(err)
+		}
+		if present, _, _ := mcp.InspectFlowHooks(settings); present["Stop"] {
+			t.Fatal("sync --no-hooks did not remove hooks")
+		}
+	})
+	t.Run("workspace default writes none, --with-hooks writes them", func(t *testing.T) {
+		isolateEnv(t)
+		ws := t.TempDir()
+		settings := filepath.Join(ws, ".claude", "settings.json")
+		if _, err := Install(Options{Scope: ScopeWorkspace, TargetDir: ws}); err != nil {
+			t.Fatal(err)
+		}
+		if present, _, _ := mcp.InspectFlowHooks(settings); present["PreToolUse"] {
+			t.Fatal("workspace install wrote hooks by default")
+		}
+		if _, err := Install(Options{Scope: ScopeWorkspace, TargetDir: ws, FlowHooks: BoolPtr(true)}); err != nil {
+			t.Fatal(err)
+		}
+		if present, _, _ := mcp.InspectFlowHooks(settings); !present["PreToolUse"] {
+			t.Fatal("--with-hooks did not write hooks")
+		}
+		if _, err := Uninstall(Options{Scope: ScopeWorkspace, TargetDir: ws}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(settings); !os.IsNotExist(err) {
+			t.Fatalf("settings.json pcs created survives uninstall: %v", err)
+		}
+	})
+	t.Run("temporary binary warns", func(t *testing.T) {
+		home := isolateEnv(t)
+		tmpBin := filepath.Join(os.TempDir(), "go-build123", "pcs.exe")
+		ExecutableFunc = func() (string, error) { return tmpBin, nil }
+		t.Cleanup(func() { ExecutableFunc = func() (string, error) { return testHookBinary, nil } })
+		rep, err := Install(Options{Scope: ScopeProfile, HomeDir: home, LauncherDir: filepath.Join(home, "bin"), NoStatusLine: true, DryRun: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rep.Warnings) == 0 || !strings.Contains(rep.Warnings[0], "temporary directory") {
+			t.Fatalf("warnings = %v", rep.Warnings)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".claude-pcs", "settings.json")); !os.IsNotExist(err) {
+			t.Fatal("dry run wrote settings.json")
+		}
+	})
+}

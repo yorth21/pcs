@@ -69,7 +69,11 @@ type Options struct {
 	LauncherArgs    string
 	NoStatusLine    bool
 	WithPlugins     bool
-	FlagOverrides   map[string]bool
+	// FlowHooks selects whether the pcs flow hooks (pcs hook <event>) are
+	// written into settings.json; nil means the scope default (on for profile
+	// scope, off otherwise).
+	FlowHooks     *bool
+	FlagOverrides map[string]bool
 }
 
 // StateSchemaVersion is the current .pcs-state.json schema. A state without
@@ -114,9 +118,16 @@ type State struct {
 	AddedStatusLine bool `json:"added_status_line,omitempty"`
 	// StatusLineSHA256 is the digest of the statusLine value pcs copied, so
 	// uninstall removes it only while it is unchanged.
-	StatusLineSHA256 string   `json:"status_line_sha256,omitempty"`
-	SharedMCPFile    string   `json:"shared_mcp_file,omitempty"`
-	ManagedFiles     []string `json:"managed_files"`
+	StatusLineSHA256 string `json:"status_line_sha256,omitempty"`
+	SharedMCPFile    string `json:"shared_mcp_file,omitempty"`
+	// FlowHooks records the effective --with-hooks/--no-hooks choice so sync
+	// keeps it; nil (a state written before flow hooks) means the scope default.
+	FlowHooks *bool `json:"flow_hooks,omitempty"`
+	// AddedFlowHooks records that pcs wrote its flow hooks into settings.json,
+	// and FlowHookBinary the pcs binary path their commands run.
+	AddedFlowHooks bool     `json:"added_flow_hooks,omitempty"`
+	FlowHookBinary string   `json:"flow_hook_binary,omitempty"`
+	ManagedFiles   []string `json:"managed_files"`
 }
 
 // hasMCPDeltaRecord reports whether the state records exactly which MCP servers,
@@ -196,6 +207,7 @@ type Report struct {
 	WriteMCPConfig bool     `json:"write_mcp_config"`
 	WriteHook      bool     `json:"write_hook"`
 	WithMCP        bool     `json:"with_mcp"`
+	FlowHooks      bool     `json:"flow_hooks"`
 	DryRun         bool     `json:"dry_run"`
 	LauncherCmd    string   `json:"launcher_cmd,omitempty"`
 	LauncherDir    string   `json:"launcher_dir,omitempty"`
@@ -623,6 +635,9 @@ func Sync(opts Options) (*Report, error) {
 	if !opts.FlagOverrides["with-plugins"] && !opts.WithPlugins {
 		opts.WithPlugins = saved.WithPlugins
 	}
+	if opts.FlowHooks == nil {
+		opts.FlowHooks = saved.FlowHooks
+	}
 	normalizeOptions(&opts)
 	return applyInstall(opts, "sync")
 }
@@ -900,6 +915,47 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		recordFile("merge-settings", layout.settingsJSONPath, "settings.json update")
 	}
 
+	// 4b. Write the pcs flow hooks (default in profile scope), or remove the
+	// ones pcs wrote earlier when they are now disabled.
+	flowHooks := flowHooksEnabled(opts.FlowHooks, layout.scope)
+	addedFlowHooks := false
+	flowHookBinary := ""
+	if prevState != nil {
+		addedFlowHooks = prevState.AddedFlowHooks
+		flowHookBinary = prevState.FlowHookBinary
+	}
+	if flowHooks {
+		bin, warning, err := resolveHookBinary()
+		if err != nil {
+			return nil, err
+		}
+		if warning != "" {
+			report.Warnings = append(report.Warnings, warning)
+		}
+		if !opts.DryRun {
+			_, created, err := mcp.MergeFlowHooks(layout.settingsJSONPath, bin, !createdSettingsJSON, flowHookBinary)
+			if err != nil {
+				return nil, fmt.Errorf("write flow hooks: %w", err)
+			}
+			if created {
+				createdSettingsJSON = true
+			}
+			addedFlowHooks = true
+			flowHookBinary = bin
+		}
+		recordFile("merge-flow-hooks", layout.settingsJSONPath, "PreToolUse, SubagentStop, Stop, UserPromptSubmit -> "+mcp.FlowHookCommand(bin, "<event>"))
+	} else if addedFlowHooks {
+		if !opts.DryRun {
+			if _, err := mcp.RemoveFlowHooks(layout.settingsJSONPath, flowHookBinary); err != nil {
+				return nil, fmt.Errorf("remove flow hooks: %w", err)
+			}
+			addedFlowHooks = false
+			flowHookBinary = ""
+		}
+		report.Actions = append(report.Actions, Action{Operation: "remove-flow-hooks", Path: layout.settingsJSONPath})
+	}
+	report.FlowHooks = flowHooks
+
 	// 5. In profile scope, create shared-mcp.json, statusLine copy, and cross-platform launchers.
 	sharedMCPFile := ""
 	addedStatusLine := false
@@ -1040,6 +1096,9 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		AddedStatusLine:     addedStatusLine,
 		StatusLineSHA256:    statusLineSHA256,
 		SharedMCPFile:       sharedMCPFile,
+		FlowHooks:           BoolPtr(flowHooks),
+		AddedFlowHooks:      addedFlowHooks,
+		FlowHookBinary:      flowHookBinary,
 		ManagedFiles:        managedFiles,
 	}
 	if !opts.DryRun {
@@ -1054,6 +1113,58 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	})
 
 	return report, nil
+}
+
+// ExecutableFunc resolves the running pcs binary; tests replace it.
+var ExecutableFunc = os.Executable
+
+// flowHooksEnabled applies the scope default (on only in profile scope) when
+// the choice is unset.
+func flowHooksEnabled(choice *bool, scope string) bool {
+	if choice != nil {
+		return *choice
+	}
+	return scope == ScopeProfile
+}
+
+// resolveHookBinary returns the absolute pcs binary the flow hooks run, plus a
+// warning when it lives in a temporary directory (e.g. a `go run` build) that
+// will not persist.
+func resolveHookBinary() (string, string, error) {
+	exe, err := ExecutableFunc()
+	if err != nil {
+		return "", "", fmt.Errorf("resolve the pcs binary for flow hooks: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	if abs, err := filepath.Abs(exe); err == nil {
+		exe = abs
+	}
+	warning := ""
+	if isTempPath(exe) {
+		warning = fmt.Sprintf("flow hooks run %s, which is in a temporary directory and may disappear; install pcs to a stable location and run 'pcs sync' (or pass --no-hooks)", filepath.ToSlash(exe))
+	}
+	return exe, warning, nil
+}
+
+func isTempPath(p string) bool {
+	if strings.Contains(filepath.ToSlash(p), "/go-build") {
+		return true
+	}
+	for _, tmp := range []string{os.TempDir(), os.Getenv("TMPDIR"), os.Getenv("TEMP"), os.Getenv("TMP")} {
+		tmp = strings.TrimSpace(tmp)
+		if tmp == "" {
+			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(tmp); err == nil {
+			tmp = resolved
+		}
+		if isAncestorPath(tmp, p) || samePath(tmp, filepath.Dir(p)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Uninstall cleanly removes pcs-owned markers, pcs-* native agents, and pcs-*
@@ -1196,6 +1307,7 @@ func Uninstall(opts Options) (*Report, error) {
 		delta.AddedPermissions = slices.Clone(savedState.AddedPermissions)
 		delta.AddedPlugins = slices.Clone(savedState.AddedPlugins)
 		delta.AddedHook = savedState.AddedHook
+		delta.FlowHookBinary = savedState.FlowHookBinary
 	}
 	if opts.RemoveMCP && !savedState.hasMCPDeltaRecord() {
 		delta.ForceRemoveAllMCP = true
