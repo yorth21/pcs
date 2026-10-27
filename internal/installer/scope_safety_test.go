@@ -2,6 +2,7 @@ package installer
 
 import (
 	"errors"
+	"github.com/yorth21/pcs/internal/mcp"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -25,6 +26,10 @@ func isolateEnv(t *testing.T) string {
 	t.Setenv("PCS_INSTALL_SCOPE", "")
 	// PATH holds only an empty directory, so no real claude (or other tool) is found.
 	t.Setenv("PATH", t.TempDir())
+	// Engram resolution must not see a real engram installed on the host.
+	origFallback := mcp.EngramFallbackPaths
+	mcp.EngramFallbackPaths = nil
+	t.Cleanup(func() { mcp.EngramFallbackPaths = origFallback })
 	return home
 }
 
@@ -300,4 +305,111 @@ func TestProfileUninstallWithoutStateLeavesSettingsUntouched(t *testing.T) {
 	}
 	assertSnapshotEqual(t, "profile", before, snapshotTree(t, profileDir))
 	assertSnapshotEqual(t, "user launcher dir", beforeBin, snapshotTree(t, userBin))
+}
+
+func TestProfileTargetOverlappingMainProfileIsRefused(t *testing.T) {
+	// relocate replaces the regular file at path with a symlink to a copy of it
+	// under dir, so the main profile file is physically inside dir.
+	relocate := func(t *testing.T, path, dir string) {
+		t.Helper()
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		moved := filepath.Join(dir, filepath.Base(path))
+		if err := writeFileCreatingDirs(moved, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(moved, path); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name string
+		// opts builds the install options given the isolated root and the home
+		// directory nested inside it.
+		opts func(t *testing.T, root, home string) Options
+	}{
+		{
+			name: "profile-dir equals the home directory",
+			opts: func(t *testing.T, root, home string) Options {
+				return Options{Scope: ScopeProfile, HomeDir: home, ProfileDir: home}
+			},
+		},
+		{
+			name: "profile-dir equals the home directory with a trailing separator",
+			opts: func(t *testing.T, root, home string) Options {
+				return Options{Scope: ScopeProfile, HomeDir: home, ProfileDir: home + string(filepath.Separator)}
+			},
+		},
+		{
+			name: "profile-dir is an ancestor of the home directory",
+			opts: func(t *testing.T, root, home string) Options {
+				return Options{Scope: ScopeProfile, HomeDir: home, ProfileDir: filepath.Dir(home)}
+			},
+		},
+		{
+			name: "profile-dir is an ancestor of the CLAUDE_CONFIG_DIR main target",
+			opts: func(t *testing.T, root, home string) Options {
+				custom := filepath.Join(home, "config", "main")
+				if err := os.MkdirAll(custom, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("CLAUDE_CONFIG_DIR", custom)
+				return Options{Scope: ScopeProfile, HomeDir: home, ProfileDir: filepath.Join(home, "config")}
+			},
+		},
+		{
+			name: "profile .claude.json is the main ~/.claude.json through a symlink",
+			opts: func(t *testing.T, root, home string) Options {
+				dotfiles := filepath.Join(home, "dotfiles")
+				relocate(t, filepath.Join(home, ".claude.json"), dotfiles)
+				return Options{Scope: ScopeProfile, HomeDir: home, ProfileDir: dotfiles}
+			},
+		},
+		{
+			name: "profile settings.json is the main settings.json through a symlink",
+			opts: func(t *testing.T, root, home string) Options {
+				dotfiles := filepath.Join(home, "dotfiles")
+				relocate(t, filepath.Join(home, ".claude", "settings.json"), dotfiles)
+				return Options{Scope: ScopeProfile, HomeDir: home, ProfileDir: dotfiles}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := isolateEnv(t)
+			home := filepath.Join(root, "users", "me")
+			seedMainProfile(t, home)
+			opts := tt.opts(t, root, home)
+			before := snapshotTree(t, root)
+
+			if _, err := Install(opts); err == nil {
+				t.Errorf("Install(%+v) succeeded, want refusal", opts)
+			}
+			if _, err := Sync(opts); err == nil {
+				t.Errorf("Sync(%+v) succeeded, want refusal", opts)
+			}
+			if _, err := Uninstall(opts); err == nil {
+				t.Errorf("Uninstall(%+v) succeeded, want refusal", opts)
+			}
+			assertSnapshotEqual(t, "isolated root", before, snapshotTree(t, root))
+		})
+	}
+}
+
+func TestProfileTargetBesideMainProfileIsAllowed(t *testing.T) {
+	root := isolateEnv(t)
+	home := filepath.Join(root, "users", "me")
+	seedMainProfile(t, home)
+	for _, dir := range []string{filepath.Join(home, ".claude-pcs"), filepath.Join(home, "profiles", "pcs")} {
+		if _, err := Install(Options{Scope: ScopeProfile, HomeDir: home, ProfileDir: dir, LauncherDir: filepath.Join(root, "bin")}); err != nil {
+			t.Errorf("Install(profile-dir %s) error: %v", dir, err)
+		}
+	}
 }

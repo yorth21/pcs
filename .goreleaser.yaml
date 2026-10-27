@@ -1,0 +1,60 @@
+# GoReleaser configuration for the pcs CLI (https://goreleaser.com).
+# Releases run from .github/workflows/release.yml when a v* tag is pushed.
+# Validate locally with: goreleaser check
+version: 2
+
+project_name: pcs
+
+builds:
+  - id: pcs
+    main: ./cmd/pcs
+    binary: pcs
+    env:
+      - CGO_ENABLED=0
+    # windows/amd64, darwin/arm64, darwin/amd64, linux/amd64.
+    goos:
+      - windows
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: linux
+        goarch: arm64
+    flags:
+      - -trimpath
+    # Same -X flags as `make build`; `pcs version` prints them.
+    ldflags:
+      - -s -w
+      - -X github.com/yorth21/pcs/internal/installer.version={{ .Version }}
+      - -X github.com/yorth21/pcs/internal/installer.commit={{ .FullCommit }}
+      - -X github.com/yorth21/pcs/internal/installer.date={{ .Date }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: pcs
+    ids:
+      - pcs
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs"
+      - "^test"

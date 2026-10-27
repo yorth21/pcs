@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/yorth21/pcs/internal/mcp"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -28,6 +29,10 @@ func isolateCLIEnv(t *testing.T) string {
 	t.Setenv("PCS_INSTALL_SCOPE", "")
 	// PATH holds only an empty directory, so no real claude (or other tool) is found.
 	t.Setenv("PATH", t.TempDir())
+	// Engram resolution must not see a real engram installed on the host.
+	origFallback := mcp.EngramFallbackPaths
+	mcp.EngramFallbackPaths = nil
+	t.Cleanup(func() { mcp.EngramFallbackPaths = origFallback })
 	return home
 }
 
@@ -207,7 +212,7 @@ func TestUninstallRemoveMCPWithoutStateRequiresForce(t *testing.T) {
 	}
 	before := snapshotFiles(t, home)
 
-	code, _, stderr := runCLI(t, home, "uninstall", "--remove-mcp")
+	code, _, stderr := runCLI(t, home, "uninstall", "--scope", "global", "--remove-mcp")
 	if code == 0 {
 		t.Fatalf("uninstall --remove-mcp without state exit 0, want refusal")
 	}
@@ -216,7 +221,7 @@ func TestUninstallRemoveMCPWithoutStateRequiresForce(t *testing.T) {
 	}
 	assertSameFiles(t, "home", before, snapshotFiles(t, home))
 
-	code, _, stderr = runCLI(t, home, "uninstall", "--remove-mcp", "--force")
+	code, _, stderr = runCLI(t, home, "uninstall", "--scope", "global", "--remove-mcp", "--force")
 	if code != 0 {
 		t.Fatalf("uninstall --remove-mcp --force exit %d: %s", code, stderr)
 	}

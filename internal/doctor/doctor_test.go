@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"fmt"
+	"github.com/yorth21/pcs/internal/mcp"
 	"path/filepath"
 	"testing"
 
@@ -25,6 +26,10 @@ func isolateDoctorEnv(t *testing.T) string {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("PCS_INSTALL_SCOPE", "")
 	t.Setenv("PATH", t.TempDir())
+	// Engram resolution must not see a real engram installed on the host.
+	origFallback := mcp.EngramFallbackPaths
+	mcp.EngramFallbackPaths = nil
+	t.Cleanup(func() { mcp.EngramFallbackPaths = origFallback })
 	return home
 }
 
@@ -62,6 +67,7 @@ func TestRunDoctor(t *testing.T) {
 			name: "healthy when explicit target profile directory is fully installed",
 			setupTarget: func(t *testing.T, dir string) string {
 				target := filepath.Join(dir, ".claude-pcs")
+				stubInstallEngram(t, "/usr/local/bin/engram")
 				if _, err := installer.Install(installer.Options{
 					Scope:     installer.ScopeProfile,
 					TargetDir: target,

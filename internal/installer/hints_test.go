@@ -3,6 +3,8 @@ package installer
 import (
 	"errors"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -57,24 +59,143 @@ func TestPathHintIsPerOS(t *testing.T) {
 	}
 }
 
-func TestProfileClaudeCommandIsPerOS(t *testing.T) {
-	args := []string{"plugin", "install", EngramPlugin}
-	if got, want := profileClaudeCommand("windows", `C:\p'x`, args), `$env:CLAUDE_CONFIG_DIR = 'C:\p''x'; claude plugin install engram@engram`; got != want {
-		t.Errorf("windows command = %q, want %q", got, want)
+// assertNoPersistentConfigDir fails when hint can leave CLAUDE_CONFIG_DIR set
+// in the caller's shell: every assignment must be scoped to one command
+// (POSIX prefix), to a cmd /c child process, or to a PowerShell block that
+// restores the previous value in finally.
+func assertNoPersistentConfigDir(t *testing.T, goos, hint string) {
+	t.Helper()
+	if strings.Contains(hint, "export CLAUDE_CONFIG_DIR") || strings.Contains(hint, "setx") {
+		t.Errorf("%s hint exports CLAUDE_CONFIG_DIR persistently: %q", goos, hint)
 	}
-	if got, want := profileClaudeCommand("linux", "/p'x", args), `CLAUDE_CONFIG_DIR='/p'\''x' claude plugin install engram@engram`; got != want {
-		t.Errorf("posix command = %q, want %q", got, want)
+	if goos == "windows" {
+		psAssign := regexp.MustCompile(`\$env:CLAUDE_CONFIG_DIR\s*=\s*'`)
+		psScoped := regexp.MustCompile(`& \{ \$prev = \$env:CLAUDE_CONFIG_DIR; \$env:CLAUDE_CONFIG_DIR = '(?:[^']|'')*'; try \{ [^{}]* \} finally \{ \$env:CLAUDE_CONFIG_DIR = \$prev \} \}`)
+		if a, s := len(psAssign.FindAllString(hint, -1)), len(psScoped.FindAllString(hint, -1)); a != s {
+			t.Errorf("windows hint has %d PowerShell CLAUDE_CONFIG_DIR assignments but only %d scoped blocks: %q", a, s, hint)
+		}
+		cmdSet := regexp.MustCompile(`(?i)set "?CLAUDE_CONFIG_DIR=`)
+		cmdScoped := regexp.MustCompile(`cmd /s /c "set "CLAUDE_CONFIG_DIR=[^"]*" && `)
+		if a, s := len(cmdSet.FindAllString(hint, -1)), len(cmdScoped.FindAllString(hint, -1)); a != s {
+			t.Errorf("windows hint has %d cmd.exe CLAUDE_CONFIG_DIR assignments but only %d inside cmd /s /c: %q", a, s, hint)
+		}
+		return
+	}
+	assign := regexp.MustCompile(`CLAUDE_CONFIG_DIR=`)
+	prefix := regexp.MustCompile(`CLAUDE_CONFIG_DIR='(?:[^']|'\\'')*' claude `)
+	if a, s := len(assign.FindAllString(hint, -1)), len(prefix.FindAllString(hint, -1)); a != s {
+		t.Errorf("%s hint has %d CLAUDE_CONFIG_DIR assignments but only %d single-command prefixes: %q", goos, a, s, hint)
+	}
+}
+
+func TestProfileClaudeCommandScopesTheConfigDir(t *testing.T) {
+	steps := requiredPluginSteps()
+	tests := []struct {
+		name       string
+		goos       string
+		profileDir string
+		want       []string
+	}{
+		{
+			name:       "windows PowerShell restores the previous value and cmd.exe uses a child process",
+			goos:       "windows",
+			profileDir: `C:\Users\O'Brien\.claude-pcs`,
+			want: []string{
+				`& { $prev = $env:CLAUDE_CONFIG_DIR; $env:CLAUDE_CONFIG_DIR = 'C:\Users\O''Brien\.claude-pcs'; try { claude plugin marketplace add ` + EngramMarketplaceSource + `; claude plugin install engram@engram } finally { $env:CLAUDE_CONFIG_DIR = $prev } }`,
+				`cmd /s /c "set "CLAUDE_CONFIG_DIR=C:\Users\O'Brien\.claude-pcs" && claude plugin marketplace add ` + EngramMarketplaceSource + ` & claude plugin install engram@engram"`,
+			},
+		},
+		{
+			name:       "linux prefixes every command",
+			goos:       "linux",
+			profileDir: "/home/o'brien/.claude-pcs",
+			want: []string{
+				`CLAUDE_CONFIG_DIR='/home/o'\''brien/.claude-pcs' claude plugin marketplace add ` + EngramMarketplaceSource + `; CLAUDE_CONFIG_DIR='/home/o'\''brien/.claude-pcs' claude plugin install engram@engram`,
+			},
+		},
+		{
+			name:       "darwin uses the posix form",
+			goos:       "darwin",
+			profileDir: "/Users/me/pcs profile",
+			want:       []string{`CLAUDE_CONFIG_DIR='/Users/me/pcs profile' claude plugin install engram@engram`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := profileClaudeCommand(tt.goos, tt.profileDir, steps...)
+			for _, w := range tt.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("profileClaudeCommand(%s) = %q, want it to contain %q", tt.goos, got, w)
+				}
+			}
+			assertNoPersistentConfigDir(t, tt.goos, got)
+		})
+	}
+}
+
+func TestLaunchHintIsTheLauncher(t *testing.T) {
+	tests := []struct {
+		name   string
+		goos   string
+		dir    string
+		onPath bool
+		want   string
+	}{
+		{name: "windows launcher on PATH", goos: "windows", dir: `C:\pcs\bin`, onPath: true, want: "claude-pcs"},
+		{name: "windows launcher off PATH runs the cmd launcher by absolute path", goos: "windows", dir: `C:\Users\O'Brien\pcs\bin\`, want: `& 'C:\Users\O''Brien\pcs\bin\claude-pcs.cmd'`},
+		{name: "linux launcher on PATH", goos: "linux", dir: "/home/me/.local/bin", onPath: true, want: "claude-pcs"},
+		{name: "linux launcher off PATH", goos: "linux", dir: "/home/o'brien/bin/", want: `'/home/o'\''brien/bin/claude-pcs'`},
+		{name: "darwin launcher off PATH", goos: "darwin", dir: "/Users/me/my bin", want: `'/Users/me/my bin/claude-pcs'`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := launchHint(tt.goos, tt.dir, tt.onPath)
+			if got != tt.want {
+				t.Errorf("launchHint(%s, %q, %v) = %q, want %q", tt.goos, tt.dir, tt.onPath, got, tt.want)
+			}
+			if strings.Contains(got, "CLAUDE_CONFIG_DIR") {
+				t.Errorf("launch hint sets CLAUDE_CONFIG_DIR: %q", got)
+			}
+		})
+	}
+}
+
+func TestNoHintLeavesClaudeConfigDirSet(t *testing.T) {
+	cases := []struct {
+		goos, profileDir, launcherDir string
+	}{
+		{"windows", `C:\Users\me\.claude-pcs`, `C:\Users\me\AppData\Local\pcs\bin`},
+		{"darwin", "/Users/me/.claude-pcs", "/Users/me/.local/bin"},
+		{"linux", "/home/me/.claude-pcs", "/home/me/.local/bin"},
+	}
+	for _, c := range cases {
+		t.Run(c.goos, func(t *testing.T) {
+			var hints []string
+			for _, onPath := range []bool{true, false} {
+				hints = append(hints, launchHint(c.goos, c.launcherDir, onPath))
+				for _, withPlugins := range []bool{true, false} {
+					hints = append(hints, profileNextSteps(c.goos, c.profileDir, c.launcherDir, onPath, withPlugins)...)
+				}
+			}
+			for _, args := range requiredPluginSteps() {
+				hints = append(hints, profileClaudeCommand(c.goos, c.profileDir, args))
+			}
+			hints = append(hints, PluginInstallCommand(c.goos, c.profileDir))
+			for _, h := range hints {
+				assertNoPersistentConfigDir(t, c.goos, h)
+			}
+		})
 	}
 }
 
 func TestProfileNextStepsArePerOS(t *testing.T) {
 	win := strings.Join(profileNextSteps("windows", `C:\prof`, `C:\bin`, false, false), "\n")
-	for _, w := range []string{"$env:CLAUDE_CONFIG_DIR = 'C:\\prof'; claude plugin marketplace add " + EngramMarketplaceSource, "claude plugin install engram@engram", "[Environment]::SetEnvironmentVariable"} {
+	for _, w := range []string{"$env:CLAUDE_CONFIG_DIR = 'C:\\prof'; try { claude plugin marketplace add " + EngramMarketplaceSource, "claude plugin install engram@engram", "[Environment]::SetEnvironmentVariable"} {
 		if !strings.Contains(win, w) {
 			t.Errorf("windows next steps missing %q:\n%s", w, win)
 		}
 	}
-	if strings.Contains(win, "CLAUDE_CONFIG_DIR=") || strings.Contains(win, "setx") {
+	if strings.Contains(win, "CLAUDE_CONFIG_DIR='") || strings.Contains(win, "setx") {
 		t.Errorf("windows next steps contain POSIX or setx syntax:\n%s", win)
 	}
 
@@ -188,5 +309,23 @@ func TestWithPluginsDryRunDoesNotRunClaude(t *testing.T) {
 	}
 	if !hasAction(rep, "install-plugins") {
 		t.Errorf("expected planned install-plugins action, got %+v", rep.Actions)
+	}
+}
+
+func TestProfileInstallReportsTheLauncherAsTheLaunchCommand(t *testing.T) {
+	home := isolateEnv(t)
+	launcherDir := filepath.Join(home, "bin")
+	rep, err := Install(Options{Scope: ScopeProfile, HomeDir: home, LauncherDir: launcherDir, LauncherArgs: "--model opus"})
+	if err != nil {
+		t.Fatalf("Install() error: %v", err)
+	}
+	if rep.LauncherOnPath {
+		t.Fatalf("isolated launcher dir %q unexpectedly on PATH", launcherDir)
+	}
+	if want := launchHint(runtime.GOOS, launcherDir, false); rep.LauncherCmd != want {
+		t.Errorf("LauncherCmd = %q, want %q", rep.LauncherCmd, want)
+	}
+	if strings.Contains(rep.LauncherCmd, "CLAUDE_CONFIG_DIR") || strings.Contains(rep.LauncherCmd, "--mcp-config") {
+		t.Errorf("LauncherCmd bypasses the launcher: %q", rep.LauncherCmd)
 	}
 }

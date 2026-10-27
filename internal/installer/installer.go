@@ -25,7 +25,6 @@ const (
 
 	DefaultAdapter = "react-shadcn"
 	DefaultPersona = "gentleman"
-	Version        = "0.1.0"
 
 	StateFileName          = ".pcs-state.json"
 	AgentOwnershipFileName = ".pcs-native-agent-ownership.json"
@@ -73,8 +72,15 @@ type Options struct {
 	FlagOverrides   map[string]bool
 }
 
+// StateSchemaVersion is the current .pcs-state.json schema. A state without
+// schema_version (0) was written by an older pcs: its added_* lists were
+// omitempty (an empty record reads as no record) and no_statusline was not
+// always persisted, so Sync migrates it (see migrateLegacyRecords).
+const StateSchemaVersion = 1
+
 // State persists the installed pcs configuration in <target-dir>/.pcs-state.json.
 type State struct {
+	SchemaVersion  int      `json:"schema_version,omitempty"`
 	Version        string   `json:"version"`
 	InstalledAt    string   `json:"installed_at"`
 	Scope          string   `json:"scope"`
@@ -96,6 +102,9 @@ type State struct {
 	CreatedClaudeMD     bool     `json:"created_claude_md,omitempty"`
 	CreatedClaudeJSON   bool     `json:"created_claude_json,omitempty"`
 	CreatedSettingsJSON bool     `json:"created_settings_json,omitempty"`
+	// CreatedSettingsKeys lists the settings.json containers pcs created in a
+	// file it did not create, so uninstall prunes them once empty.
+	CreatedSettingsKeys []string `json:"created_settings_keys,omitempty"`
 	LauncherDir         string   `json:"launcher_dir,omitempty"`
 	LauncherArgs        string   `json:"launcher_args,omitempty"`
 	// NoStatusLine and WithPlugins persist the opt-out/opt-in install flags so a
@@ -114,6 +123,53 @@ type State struct {
 // permissions, and plugins pcs added (possibly none).
 func (s *State) hasMCPDeltaRecord() bool {
 	return s != nil && s.AddedMCPServers != nil && s.AddedPermissions != nil && s.AddedPlugins != nil
+}
+
+// noStatusLineUnknown reports whether a legacy state (schema_version 0) leaves
+// the --no-statusline choice unknown: an older pcs did not persist it, so a
+// missing flag proves nothing unless pcs recorded copying a statusLine.
+func (s *State) noStatusLineUnknown() bool {
+	return s != nil && s.SchemaVersion < 1 && !s.NoStatusLine && !s.AddedStatusLine
+}
+
+// migrateLegacyRecords upgrades a legacy state (schema_version 0) whose
+// omitempty added_* lists read as "no record" (nil). Migration never invents a
+// record: a list becomes an explicit empty record only when none of the default
+// entries it would track is present in the target file, which proves pcs has
+// nothing of that kind left to remove. Any present default entry may predate
+// pcs, so that list stays unrecorded.
+func migrateLegacyRecords(s *State, claudeJSONPath, settingsJSONPath string) {
+	if s == nil || s.SchemaVersion >= 1 {
+		return
+	}
+	if s.AddedMCPServers == nil {
+		if servers, err := mcp.InspectConfiguredServers(claudeJSONPath); err == nil && !slices.ContainsFunc(mcp.DefaultComponents, func(c string) bool { return servers[c] }) {
+			s.AddedMCPServers = []string{}
+		}
+	}
+	if s.AddedPermissions != nil && s.AddedPlugins != nil {
+		return
+	}
+	hasPermissions, hasPlugin, err := mcp.InspectSettingsDefaults(settingsJSONPath)
+	if err != nil {
+		return
+	}
+	if s.AddedPermissions == nil && !hasPermissions {
+		s.AddedPermissions = []string{}
+	}
+	if s.AddedPlugins == nil && !hasPlugin {
+		s.AddedPlugins = []string{}
+	}
+}
+
+// claudeMDHasOnlyPCSBlocks reports whether content holds nothing but pcs
+// marker blocks and whitespace, i.e. a backup of it would only hold pcs's own
+// content.
+func claudeMDHasOnlyPCSBlocks(content string) bool {
+	for _, m := range assets.AllPCSMarkers {
+		content, _ = marker.RemoveBlock(content, m)
+	}
+	return strings.TrimSpace(content) == ""
 }
 
 // AgentOwnership tracks which native subagent files in agents/ are owned by pcs.
@@ -369,29 +425,72 @@ func resolveLayout(opts Options) (*resolvedLayout, error) {
 	return layout, nil
 }
 
-// guardProfileTarget refuses a profile target that resolves to the main Claude
-// configuration directory (~/.claude, or $CLAUDE_CONFIG_DIR when set). The
-// CLAUDE_CONFIG_DIR check is skipped when that directory already holds a pcs
-// profile install, which is the case inside a claude-pcs launcher session.
+// guardProfileTarget refuses a profile target that overlaps the main Claude
+// profile: the home directory, the main configuration directory (~/.claude, or
+// $CLAUDE_CONFIG_DIR when set) or any of its ancestors, or a directory whose
+// derived .claude.json or settings.json is the main profile's file (for example
+// through a symlink). The $CLAUDE_CONFIG_DIR checks are skipped when that
+// directory already holds a pcs profile install, which is the case inside a
+// claude-pcs launcher session; ~/.claude is never exempt.
 func guardProfileTarget(absTarget, absHome, claudeConfigDir string) error {
+	if samePath(absTarget, absHome) {
+		return fmt.Errorf("refusing profile target %s: it is the home directory, so the profile .claude.json would be the main ~/.claude.json; choose another --profile-dir", absTarget)
+	}
+	type mainProfile struct {
+		dir, label string
+		files      []string
+	}
 	mainDir := filepath.Join(absHome, ".claude")
-	if samePath(absTarget, mainDir) {
-		return fmt.Errorf("refusing profile target %s: it is the main Claude config directory; choose another --profile-dir", absTarget)
+	mains := []mainProfile{{
+		dir:   mainDir,
+		label: "the main Claude config directory",
+		files: []string{filepath.Join(absHome, ".claude.json"), filepath.Join(mainDir, ".claude.json"), filepath.Join(mainDir, "settings.json")},
+	}}
+	if claudeConfigDir != "" {
+		absConfig, err := filepath.Abs(claudeConfigDir)
+		if err != nil {
+			absConfig = claudeConfigDir
+		}
+		if saved, err := readState(filepath.Join(absConfig, StateFileName)); err != nil || saved.Scope != ScopeProfile {
+			mains = append(mains, mainProfile{
+				dir:   absConfig,
+				label: "the main Claude config directory ($CLAUDE_CONFIG_DIR)",
+				files: []string{filepath.Join(absConfig, ".claude.json"), filepath.Join(absConfig, "settings.json")},
+			})
+		}
 	}
-	if claudeConfigDir == "" {
-		return nil
+
+	derived := []string{filepath.Join(absTarget, ".claude.json"), filepath.Join(absTarget, "settings.json")}
+	for _, m := range mains {
+		if samePath(absTarget, m.dir) {
+			return fmt.Errorf("refusing profile target %s: it is %s; choose another --profile-dir", absTarget, m.label)
+		}
+		if isAncestorPath(absTarget, m.dir) {
+			return fmt.Errorf("refusing profile target %s: it contains %s %s; choose another --profile-dir", absTarget, m.label, m.dir)
+		}
+		for _, own := range derived {
+			for _, mainFile := range m.files {
+				if samePath(own, mainFile) {
+					return fmt.Errorf("refusing profile target %s: its %s is the main profile file %s; choose another --profile-dir", absTarget, filepath.Base(own), mainFile)
+				}
+			}
+		}
 	}
-	absConfig, err := filepath.Abs(claudeConfigDir)
-	if err != nil {
-		absConfig = claudeConfigDir
+	return nil
+}
+
+// isAncestorPath reports whether ancestor strictly contains p after both are
+// canonicalized like samePath. Comparison is case-insensitive on Windows.
+func isAncestorPath(ancestor, p string) bool {
+	a, b := canonicalPath(ancestor), canonicalPath(p)
+	if runtime.GOOS == "windows" {
+		a, b = strings.ToLower(a), strings.ToLower(b)
 	}
-	if !samePath(absTarget, absConfig) {
-		return nil
+	rel, err := filepath.Rel(a, b)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
 	}
-	if saved, err := readState(filepath.Join(absTarget, StateFileName)); err == nil && saved.Scope == ScopeProfile {
-		return nil
-	}
-	return fmt.Errorf("refusing profile target %s: it is the main Claude config directory ($CLAUDE_CONFIG_DIR); choose another --profile-dir", absTarget)
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // samePath reports whether a and b name the same location after making them
@@ -513,6 +612,13 @@ func Sync(opts Options) (*Report, error) {
 	}
 	if !opts.FlagOverrides["no-statusline"] && !opts.NoStatusLine {
 		opts.NoStatusLine = saved.NoStatusLine
+		if saved.noStatusLineUnknown() {
+			// Keep the profile's current statusLine state: copy nothing into a
+			// profile without one, since it may have been installed with
+			// --no-statusline. The migrated state then records that choice.
+			_, present, err := mcp.StatusLineSHA256(layout.settingsJSONPath)
+			opts.NoStatusLine = err != nil || !present
+		}
 	}
 	if !opts.FlagOverrides["with-plugins"] && !opts.WithPlugins {
 		opts.WithPlugins = saved.WithPlugins
@@ -585,6 +691,7 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 
 	statePath := filepath.Join(layout.targetDir, StateFileName)
 	prevState, _ := readState(statePath)
+	migrateLegacyRecords(prevState, layout.claudeJSONPath, layout.settingsJSONPath)
 
 	report := &Report{
 		Operation:      opName,
@@ -638,8 +745,14 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerOrchestrator, orchBlock)
 	updatedClaudeMD = marker.UpsertBlock(updatedClaudeMD, assets.MarkerUXRouting, routingBlock)
 
+	// pcs created CLAUDE.md when it did not exist before pcs (recorded in the
+	// state) or does not exist now; its backup would only hold pcs's content.
+	createdClaudeMD := !claudeMDExisted
+	if prevState != nil && prevState.CreatedClaudeMD {
+		createdClaudeMD = true
+	}
 	if !opts.DryRun {
-		if claudeMDExisted {
+		if claudeMDExisted && !createdClaudeMD && !claudeMDHasOnlyPCSBlocks(existingClaudeMD) {
 			if err := mcp.WritePrePCSBackupOnce(layout.claudeMDPath, []byte(existingClaudeMD), claudeMDPerm); err != nil {
 				return nil, err
 			}
@@ -720,9 +833,9 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	addedPermissions := []string{}
 	addedPlugins := []string{}
 	addedHook := false
-	createdClaudeMD := !claudeMDExisted
 	createdClaudeJSON := false
 	createdSettingsJSON := false
+	var createdSettingsKeys []string
 
 	if prevState != nil {
 		// slices.Clone preserves nil, so a legacy state without a record stays
@@ -731,15 +844,15 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		addedPermissions = slices.Clone(prevState.AddedPermissions)
 		addedPlugins = slices.Clone(prevState.AddedPlugins)
 		addedHook = prevState.AddedHook
-		createdClaudeMD = prevState.CreatedClaudeMD
 		createdClaudeJSON = prevState.CreatedClaudeJSON
 		createdSettingsJSON = prevState.CreatedSettingsJSON
+		createdSettingsKeys = slices.Clone(prevState.CreatedSettingsKeys)
 	}
 
 	if opts.WriteMCPConfig {
 		enabledMCPs = slices.Clone(mcp.DefaultComponents)
 		if !opts.DryRun {
-			claudeRes, err := mcp.MergeClaudeJSONWithDelta(layout.claudeJSONPath, enabledMCPs)
+			claudeRes, err := mcp.MergeClaudeJSONWithDelta(layout.claudeJSONPath, enabledMCPs, !createdClaudeJSON)
 			if err != nil {
 				return nil, err
 			}
@@ -758,12 +871,17 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	if opts.WriteMCPConfig || opts.WriteHook {
 		components := slices.Clone(mcp.DefaultComponents)
 		if !opts.DryRun {
-			settingsRes, err := mcp.MergeSettingsJSONWithDelta(layout.settingsJSONPath, components, layout.targetDir, opts.WriteMCPConfig, opts.WriteHook)
+			settingsRes, err := mcp.MergeSettingsJSONWithDelta(layout.settingsJSONPath, components, layout.targetDir, opts.WriteMCPConfig, opts.WriteHook, !createdSettingsJSON)
 			if err != nil {
 				return nil, err
 			}
 			if settingsRes.CreatedFile {
 				createdSettingsJSON = true
+			}
+			for _, k := range settingsRes.CreatedKeys {
+				if !slices.Contains(createdSettingsKeys, k) {
+					createdSettingsKeys = append(createdSettingsKeys, k)
+				}
 			}
 			for _, p := range settingsRes.AddedPermissions {
 				if !slices.Contains(addedPermissions, p) {
@@ -793,19 +911,27 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	}
 
 	if layout.scope == ScopeProfile && layout.sharedMCPPath != "" {
+		// engramMissing records that shared-mcp.json got no engram server because
+		// no engram binary resolved; a successful --with-plugins provides Engram.
+		engramMissing := false
 		if !opts.DryRun {
-			if err := mcp.GenerateSharedMCPFile(layout.sharedMCPPath, layout.mainClaudeJSONPath); err != nil {
+			missing, err := mcp.GenerateSharedMCPFile(layout.sharedMCPPath, layout.mainClaudeJSONPath)
+			if err != nil {
 				return nil, fmt.Errorf("generate shared-mcp.json: %w", err)
 			}
+			engramMissing = missing
 		}
 		sharedMCPFile = layout.sharedMCPPath
 		recordFile("write-shared-mcp", layout.sharedMCPPath, "shared MCP configuration (0600)")
 
 		if !opts.NoStatusLine {
 			if !opts.DryRun {
-				copied, err := mcp.CopyStatusLineIfMissing(layout.settingsJSONPath, layout.mainSettingsPath)
+				copied, created, err := mcp.CopyStatusLineIfMissing(layout.settingsJSONPath, layout.mainSettingsPath, !createdSettingsJSON)
 				if err != nil {
 					return nil, fmt.Errorf("copy statusLine: %w", err)
+				}
+				if created {
+					createdSettingsJSON = true
 				}
 				if copied {
 					digest, _, err := mcp.StatusLineSHA256(layout.settingsJSONPath)
@@ -828,8 +954,15 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 			} else if failures := installRequiredPlugins(runtime.GOOS, layout.targetDir); len(failures) > 0 {
 				detail += " (failed; see warnings)"
 				report.Warnings = append(report.Warnings, failures...)
+			} else {
+				engramMissing = false
 			}
 			report.Actions = append(report.Actions, Action{Operation: "install-plugins", Path: layout.targetDir, Detail: detail})
+		}
+		if engramMissing {
+			report.Warnings = append(report.Warnings, fmt.Sprintf(
+				"no engram binary found and the main profile defines no engram MCP server, so %s has no engram server and pcs agents cannot use Engram memory; install engram (%s) and run 'pcs sync --scope profile', or run 'pcs sync --scope profile --with-plugins'",
+				layout.sharedMCPPath, EngramProjectURL))
 		}
 
 		scripts := renderLaunchers(layout.targetDir, layout.sharedMCPPath, launcherArgList)
@@ -862,7 +995,7 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		report.LauncherDir = layout.userBinDir
 		report.LauncherOnPath = isDirOnPath(layout.userBinDir)
 
-		report.LauncherCmd = launcherCommand(runtime.GOOS, layout.targetDir, layout.sharedMCPPath)
+		report.LauncherCmd = launchHint(runtime.GOOS, layout.userBinDir, report.LauncherOnPath)
 		report.NextSteps = append(report.NextSteps,
 			profileNextSteps(runtime.GOOS, layout.targetDir, layout.userBinDir, report.LauncherOnPath, opts.WithPlugins)...)
 	}
@@ -880,6 +1013,7 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 
 	// 7. Persist .pcs-state.json.
 	state := State{
+		SchemaVersion:       StateSchemaVersion,
 		Version:             Version,
 		InstalledAt:         time.Now().UTC().Format(time.RFC3339),
 		Scope:               layout.scope,
@@ -898,6 +1032,7 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 		CreatedClaudeMD:     createdClaudeMD,
 		CreatedClaudeJSON:   createdClaudeJSON,
 		CreatedSettingsJSON: createdSettingsJSON,
+		CreatedSettingsKeys: createdSettingsKeys,
 		LauncherDir:         layout.userBinDir,
 		LauncherArgs:        opts.LauncherArgs,
 		NoStatusLine:        opts.NoStatusLine,
@@ -1042,13 +1177,21 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 	}
 
-	// 4. Unmerge exactly the pcs-added MCP entries recorded in the saved state (an
+	// 4. Remove the statusLine pcs copied first, so the unmerge below deletes a
+	// settings.json that pcs created once nothing else is left in it.
+	if savedState != nil && savedState.AddedStatusLine {
+		uninstallStatusLine(layout, savedState, opts.DryRun, report)
+	}
+
+	// 5. Unmerge exactly the pcs-added MCP entries recorded in the saved state (an
 	// empty record removes nothing). Defaults are removed only with --remove-mcp
-	// --force when no record exists.
+	// --force when no record exists. Files and containers pcs created are
+	// removed once empty.
 	delta := mcp.UnmergeDelta{}
 	if savedState != nil {
 		delta.CreatedClaudeJSON = savedState.CreatedClaudeJSON
 		delta.CreatedSettingsJSON = savedState.CreatedSettingsJSON
+		delta.CreatedSettingsKeys = slices.Clone(savedState.CreatedSettingsKeys)
 		delta.AddedMCPServers = slices.Clone(savedState.AddedMCPServers)
 		delta.AddedPermissions = slices.Clone(savedState.AddedPermissions)
 		delta.AddedPlugins = slices.Clone(savedState.AddedPlugins)
@@ -1067,7 +1210,7 @@ func Uninstall(opts Options) (*Report, error) {
 		Path:      layout.settingsJSONPath,
 	})
 
-	// 5. In workspace scope, remove <workspace>/.atl/pcs-skill-registry.md (and .atl/ if empty).
+	// 6. In workspace scope, remove <workspace>/.atl/pcs-skill-registry.md (and .atl/ if empty).
 	if layout.scope == ScopeWorkspace && layout.workspaceRoot != "" {
 		regPath := filepath.Join(layout.workspaceRoot, ".atl", registry.RegistryFileName)
 		if _, err := os.Stat(regPath); err == nil {
@@ -1082,7 +1225,7 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 	}
 
-	// 6. In profile scope, remove shared-mcp.json, statusLine, and launchers.
+	// 7. In profile scope, remove shared-mcp.json and launchers.
 	if layout.sharedMCPPath != "" {
 		if _, err := os.Stat(layout.sharedMCPPath); err == nil {
 			if !opts.DryRun {
@@ -1094,10 +1237,6 @@ func Uninstall(opts Options) (*Report, error) {
 			})
 		}
 	}
-	if savedState != nil && savedState.AddedStatusLine {
-		uninstallStatusLine(layout, savedState, opts.DryRun, report)
-	}
-
 	// Remove cross-platform profile launchers if present and clean up bin/ if empty.
 	if layout.launcherPath != "" {
 		targetDirs := []string{filepath.Dir(layout.launcherPath)}
@@ -1132,7 +1271,7 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 	}
 
-	// 7. Remove .pcs-state.json.
+	// 8. Remove .pcs-state.json.
 	if _, err := os.Stat(statePath); err == nil {
 		if !opts.DryRun {
 			_ = os.Remove(statePath)
@@ -1143,7 +1282,7 @@ func Uninstall(opts Options) (*Report, error) {
 		})
 	}
 
-	// 8. Keep every .pre-pcs.bak backup and list it so the user can restore or delete it.
+	// 9. Keep every .pre-pcs.bak backup and list it so the user can restore or delete it.
 	for _, p := range []string{layout.claudeMDPath, layout.claudeJSONPath, layout.settingsJSONPath} {
 		if p == "" {
 			continue
