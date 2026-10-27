@@ -114,7 +114,9 @@ Open `claude-pcs` in the frontend repository and ask in plain language. The coor
 | "Build or improve feature X" | `t2` / `t3` | explore → strategy → architecture → apply → verify, with the spec and tasks in `pcs/specs/` and `pcs/tasks/` |
 
 - When the coordinator needs a product decision, it runs `pcs flow await`, asks one question, and stops. Your answer resumes the flow.
-- Run `pcs flow status` in your own terminal to see where the agent is.
+- The profile status line shows the active flow after your own status line, for example `… │ pcs:checkout t2 ▸ apply 4/5` or `pcs:x audit ▸ awaiting user` (`pcs statusline-wrap` runs the main profile's command with a 2s timeout). Opt out with `pcs sync --scope profile --with-flow-statusline=false`; `pcs uninstall` restores the original statusLine exactly.
+- Run `pcs flow status` in your own terminal to see where the agent is. `pcs flow record` works only there: the hooks deny it from the coordinator and from every subagent.
+- After verify, `pcs flow close` re-checks the working tree (`git diff HEAD` plus untracked files, excluding `.pcs/` and `pcs/`). If the source changed since verify, it refuses and `pcs flow next` relaunches `pcs-verifier`.
 - If a session died mid-flow, the next session is told to `pcs flow adopt` it or to `pcs flow close --abandon --reason "..."`. Flows idle for more than 12 hours are abandoned automatically on the next `pcs flow start`.
 - Give the dev server URL (and test credentials, if any) in the prompt so the auditor can inspect the running app. Credentials are never persisted.
 

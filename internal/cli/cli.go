@@ -71,7 +71,14 @@ func Run(args []string, env Env) int {
 	case "codegraph":
 		return runCodeGraph(rest, env)
 	case "flow":
+		if len(rest) > 0 && rest[0] == "statusline" {
+			return flow.RunStatusLine(rest[1:], env.Stdin, env.Stdout, env.WorkDir)
+		}
 		return flow.RunCLI(rest, env.Stdout, env.Stderr, env.WorkDir)
+	case "statusline":
+		return flow.RunStatusLine(rest, env.Stdin, env.Stdout, env.WorkDir)
+	case "statusline-wrap":
+		return flow.RunStatusLineWrap(rest, env.Stdin, env.Stdout, env.WorkDir)
 	case "hook":
 		return runHook(rest, env)
 	default:
@@ -126,6 +133,7 @@ func runInstall(args []string, env Env) int {
 	withPlugins := fs.Bool("with-plugins", false, "Add the engram marketplace and install the engram@engram plugin into the profile via the claude CLI (remembered by sync)")
 	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json (remembered by sync)")
 	withHooks := fs.Bool("with-hooks", false, "Write the pcs flow hooks (PreToolUse, SubagentStop, Stop, UserPromptSubmit) into settings.json; default on for --scope profile only (remembered by sync)")
+	withFlowStatusLine := fs.Bool("with-flow-statusline", true, "Profile scope: wrap the profile statusLine with pcs statusline-wrap to append the active flow segment; default on unless --no-statusline (remembered by sync)")
 	noHooks := fs.Bool("no-hooks", false, "Do not write the pcs flow hooks into settings.json (remembered by sync)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned actions without writing files")
 	asJSON := fs.Bool("json", false, "Output installation report as JSON")
@@ -185,6 +193,7 @@ func runInstall(args []string, env Env) int {
 		WithPlugins:     *withPlugins,
 		NoStatusLine:    *noStatusLine,
 		FlowHooks:       flowHooks,
+		FlowStatusLine:  flagBoolPtr(overrides, "with-flow-statusline", *withFlowStatusLine),
 		DryRun:          *dryRun,
 		FlagOverrides:   overrides,
 	})
@@ -218,6 +227,7 @@ func runSync(args []string, env Env) int {
 	withPlugins := fs.Bool("with-plugins", false, "Add the engram marketplace and install the engram@engram plugin into the profile via the claude CLI (remembered by sync)")
 	noStatusLine := fs.Bool("no-statusline", false, "Do not copy statusLine from main profile into profile settings.json (remembered by sync)")
 	withHooks := fs.Bool("with-hooks", false, "Write the pcs flow hooks into settings.json (remembered by sync)")
+	withFlowStatusLine := fs.Bool("with-flow-statusline", true, "Profile scope: wrap the profile statusLine with pcs statusline-wrap (remembered by sync)")
 	noHooks := fs.Bool("no-hooks", false, "Remove or do not write the pcs flow hooks in settings.json (remembered by sync)")
 	dryRun := fs.Bool("dry-run", false, "Preview planned sync actions without writing files")
 	asJSON := fs.Bool("json", false, "Output sync report as JSON")
@@ -279,6 +289,7 @@ func runSync(args []string, env Env) int {
 		WithPlugins:     *withPlugins,
 		NoStatusLine:    *noStatusLine,
 		FlowHooks:       flowHooks,
+		FlowStatusLine:  flagBoolPtr(overrides, "with-flow-statusline", *withFlowStatusLine),
 		DryRun:          *dryRun,
 		FlagOverrides:   overrides,
 	})
@@ -419,6 +430,15 @@ func flowHooksChoice(visited map[string]bool, withHooks, noHooks bool, cmd strin
 		return installer.BoolPtr(true), true
 	}
 	return nil, true
+}
+
+// flagBoolPtr returns a pointer to value when the named flag was passed, and
+// nil otherwise (the scope default, or the saved choice on sync).
+func flagBoolPtr(visited map[string]bool, name string, value bool) *bool {
+	if !visited[name] {
+		return nil
+	}
+	return installer.BoolPtr(value)
 }
 
 // profileDirImpliesProfile returns the profile scope when --profile-dir was given
@@ -783,6 +803,10 @@ Commands:
                            (state in <project>/.pcs/flows/<feature>.json)
   hook <event>             Claude Code hook entry point: pre-tool-use, subagent-stop, stop,
                            user-prompt-submit (installed by default in profile scope)
+  statusline [--cwd <dir>] Print the active flow segment (e.g. "pcs:x t2 ▸ apply 4/5"); reads the
+                           Claude Code statusLine stdin JSON; prints nothing without a flow
+  statusline-wrap          Profile statusLine command: runs the base command recorded in
+                           --state <.pcs-state.json> (2s timeout) and appends " │ " + the segment
   version                  Print pcs CLI version
   help                     Show this help message
 
@@ -797,6 +821,8 @@ Key Flags (install / sync / uninstall / status):
   --write-hook                       Write UserPromptSubmit skill-registry refresh hook into settings.json (default: false)
   --with-hooks / --no-hooks          Write or skip the pcs flow hooks (pcs hook <event>) in settings.json
                                      (default: on for --scope profile, off otherwise; remembered by sync)
+  --with-flow-statusline=true|false  (profile scope) Wrap the profile statusLine with pcs statusline-wrap
+                                     (default: on unless --no-statusline; remembered by sync)
   --remove-mcp                       (uninstall) Remove only the MCP servers, permissions, and plugins pcs recorded as added
   --force                            (uninstall) With --remove-mcp and no install record, remove the default MCP entries anyway
                                      (requires --scope, --profile-dir, or --target-dir on the command line)

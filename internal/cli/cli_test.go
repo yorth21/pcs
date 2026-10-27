@@ -352,6 +352,13 @@ func TestCLIFlowAndHookRouting(t *testing.T) {
 	if code := Run([]string{"hook", "unknown"}, env); code != 2 {
 		t.Fatalf("unknown hook event exit = %d", code)
 	}
+	for _, args := range [][]string{{"statusline", "--cwd", root}, {"flow", "statusline", "--cwd", root}, {"statusline-wrap", "--cwd", root}} {
+		out.Reset()
+		env.Stdin = strings.NewReader("{}")
+		if code := Run(args, env); code != 0 || strings.TrimSpace(out.String()) != "pcs:demo audit ▸ explore 1/2" {
+			t.Fatalf("%v = %d %q", args, code, out.String())
+		}
+	}
 }
 
 func TestFlowHooksChoice(t *testing.T) {

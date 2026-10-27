@@ -72,8 +72,13 @@ type Options struct {
 	// FlowHooks selects whether the pcs flow hooks (pcs hook <event>) are
 	// written into settings.json; nil means the scope default (on for profile
 	// scope, off otherwise).
-	FlowHooks     *bool
-	FlagOverrides map[string]bool
+	FlowHooks *bool
+	// FlowStatusLine selects whether the profile statusLine is wrapped with
+	// `pcs statusline-wrap` to append the active flow segment; nil means the
+	// default (on in profile scope unless NoStatusLine). Other scopes never
+	// wrap, so the main profile is never modified.
+	FlowStatusLine *bool
+	FlagOverrides  map[string]bool
 }
 
 // StateSchemaVersion is the current .pcs-state.json schema. A state without
@@ -129,9 +134,18 @@ type State struct {
 	FlowHooks *bool `json:"flow_hooks,omitempty"`
 	// AddedFlowHooks records that pcs wrote its flow hooks into settings.json,
 	// and FlowHookBinary the pcs binary path their commands run.
-	AddedFlowHooks bool     `json:"added_flow_hooks,omitempty"`
-	FlowHookBinary string   `json:"flow_hook_binary,omitempty"`
-	ManagedFiles   []string `json:"managed_files"`
+	AddedFlowHooks bool   `json:"added_flow_hooks,omitempty"`
+	FlowHookBinary string `json:"flow_hook_binary,omitempty"`
+	// FlowStatusLine records the effective --with-flow-statusline choice.
+	// AddedFlowStatusLine records that pcs replaced the profile statusLine
+	// with its wrapper; FlowStatusLineBase holds the replaced statusLine value
+	// (absent when there was none), restored exactly on uninstall or opt-out,
+	// and FlowStatusLineBaseCommand its command, which the wrapper runs.
+	FlowStatusLine            *bool           `json:"flow_statusline,omitempty"`
+	AddedFlowStatusLine       bool            `json:"added_flow_statusline,omitempty"`
+	FlowStatusLineBase        json.RawMessage `json:"flow_statusline_base,omitempty"`
+	FlowStatusLineBaseCommand string          `json:"flow_statusline_base_command,omitempty"`
+	ManagedFiles              []string        `json:"managed_files"`
 }
 
 // hasMCPDeltaRecord reports whether the state records exactly which MCP servers,
@@ -642,6 +656,9 @@ func Sync(opts Options) (*Report, error) {
 	if opts.FlowHooks == nil {
 		opts.FlowHooks = saved.FlowHooks
 	}
+	if opts.FlowStatusLine == nil {
+		opts.FlowStatusLine = saved.FlowStatusLine
+	}
 	normalizeOptions(&opts)
 	return applyInstall(opts, "sync")
 }
@@ -965,7 +982,17 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	var sharedMCPAdded []string
 	addedStatusLine := false
 	statusLineSHA256 := ""
+	flowStatusLine := flowStatusLineEnabled(opts.FlowStatusLine, layout.scope, opts.NoStatusLine)
+	addedFlowStatusLine := false
+	var flowStatusLineBase json.RawMessage
+	flowStatusLineBaseCommand := ""
+	if opts.FlowStatusLine != nil && *opts.FlowStatusLine && layout.scope != ScopeProfile {
+		report.Warnings = append(report.Warnings, "--with-flow-statusline applies only to --scope profile; the statusLine was not changed")
+	}
 	if prevState != nil {
+		addedFlowStatusLine = prevState.AddedFlowStatusLine
+		flowStatusLineBase = prevState.FlowStatusLineBase
+		flowStatusLineBaseCommand = prevState.FlowStatusLineBaseCommand
 		sharedMCPFile = prevState.SharedMCPFile
 		sharedMCPAdded = prevState.SharedMCPAddedServers
 		addedStatusLine = prevState.AddedStatusLine
@@ -1008,6 +1035,48 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 			} else {
 				recordFile("copy-statusline", layout.settingsJSONPath, "copy statusLine from main profile (dry-run)")
 			}
+		}
+
+		// 5b. Wrap the profile statusLine (the copied main command, if any) with
+		// pcs statusline-wrap, or restore the wrapped value when disabled.
+		current, present, err := readStatusLineValue(layout.settingsJSONPath)
+		if err != nil {
+			return nil, fmt.Errorf("read statusLine: %w", err)
+		}
+		wrapped := present && isFlowStatusLineValue(current)
+		if flowStatusLine {
+			bin, warning, err := resolveHookBinary()
+			if err != nil {
+				return nil, err
+			}
+			if warning != "" && !flowHooks {
+				report.Warnings = append(report.Warnings, warning)
+			}
+			if !wrapped {
+				flowStatusLineBase = nil
+				if present {
+					flowStatusLineBase = current
+				}
+				flowStatusLineBaseCommand = statusLineCommand(flowStatusLineBase)
+			}
+			if !opts.DryRun {
+				created, err := writeStatusLineValue(layout.settingsJSONPath, flowStatusLineValue(bin, statePath, flowStatusLineBase), !createdSettingsJSON)
+				if err != nil {
+					return nil, fmt.Errorf("wrap statusLine: %w", err)
+				}
+				if created {
+					createdSettingsJSON = true
+				}
+				addedFlowStatusLine = true
+			}
+			recordFile("wrap-statusline", layout.settingsJSONPath, "statusLine -> "+FlowStatusLineCommand(bin, statePath))
+		} else if addedFlowStatusLine && !opts.DryRun {
+			if err := restoreFlowStatusLine(layout, flowStatusLineBase, report); err != nil {
+				return nil, err
+			}
+			addedFlowStatusLine = false
+			flowStatusLineBase = nil
+			flowStatusLineBaseCommand = ""
 		}
 
 		if opts.WithPlugins {
@@ -1076,38 +1145,42 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 
 	// 7. Persist .pcs-state.json.
 	state := State{
-		SchemaVersion:         StateSchemaVersion,
-		Version:               Version,
-		InstalledAt:           time.Now().UTC().Format(time.RFC3339),
-		Scope:                 layout.scope,
-		TargetDir:             layout.targetDir,
-		Adapter:               opts.Adapter,
-		Persona:               opts.Persona,
-		MCPGuidance:           mcpGuidance,
-		WriteMCPConfig:        opts.WriteMCPConfig,
-		WriteHook:             opts.WriteHook,
-		WithMCP:               opts.WithMCP,
-		EnabledMCPs:           enabledMCPs,
-		AddedMCPServers:       addedMCPServers,
-		AddedPermissions:      addedPermissions,
-		AddedPlugins:          addedPlugins,
-		AddedHook:             addedHook,
-		CreatedClaudeMD:       createdClaudeMD,
-		CreatedClaudeJSON:     createdClaudeJSON,
-		CreatedSettingsJSON:   createdSettingsJSON,
-		CreatedSettingsKeys:   createdSettingsKeys,
-		LauncherDir:           layout.userBinDir,
-		LauncherArgs:          opts.LauncherArgs,
-		NoStatusLine:          opts.NoStatusLine,
-		WithPlugins:           opts.WithPlugins,
-		AddedStatusLine:       addedStatusLine,
-		StatusLineSHA256:      statusLineSHA256,
-		SharedMCPFile:         sharedMCPFile,
-		SharedMCPAddedServers: sharedMCPAdded,
-		FlowHooks:             BoolPtr(flowHooks),
-		AddedFlowHooks:        addedFlowHooks,
-		FlowHookBinary:        flowHookBinary,
-		ManagedFiles:          managedFiles,
+		SchemaVersion:             StateSchemaVersion,
+		Version:                   Version,
+		InstalledAt:               time.Now().UTC().Format(time.RFC3339),
+		Scope:                     layout.scope,
+		TargetDir:                 layout.targetDir,
+		Adapter:                   opts.Adapter,
+		Persona:                   opts.Persona,
+		MCPGuidance:               mcpGuidance,
+		WriteMCPConfig:            opts.WriteMCPConfig,
+		WriteHook:                 opts.WriteHook,
+		WithMCP:                   opts.WithMCP,
+		EnabledMCPs:               enabledMCPs,
+		AddedMCPServers:           addedMCPServers,
+		AddedPermissions:          addedPermissions,
+		AddedPlugins:              addedPlugins,
+		AddedHook:                 addedHook,
+		CreatedClaudeMD:           createdClaudeMD,
+		CreatedClaudeJSON:         createdClaudeJSON,
+		CreatedSettingsJSON:       createdSettingsJSON,
+		CreatedSettingsKeys:       createdSettingsKeys,
+		LauncherDir:               layout.userBinDir,
+		LauncherArgs:              opts.LauncherArgs,
+		NoStatusLine:              opts.NoStatusLine,
+		WithPlugins:               opts.WithPlugins,
+		AddedStatusLine:           addedStatusLine,
+		StatusLineSHA256:          statusLineSHA256,
+		SharedMCPFile:             sharedMCPFile,
+		SharedMCPAddedServers:     sharedMCPAdded,
+		FlowHooks:                 BoolPtr(flowHooks),
+		AddedFlowHooks:            addedFlowHooks,
+		FlowHookBinary:            flowHookBinary,
+		FlowStatusLine:            BoolPtr(flowStatusLine),
+		AddedFlowStatusLine:       addedFlowStatusLine,
+		FlowStatusLineBase:        flowStatusLineBase,
+		FlowStatusLineBaseCommand: flowStatusLineBaseCommand,
+		ManagedFiles:              managedFiles,
 	}
 	if !opts.DryRun {
 		if err := writeJSONFile(statePath, state); err != nil {
@@ -1133,6 +1206,166 @@ func flowHooksEnabled(choice *bool, scope string) bool {
 		return *choice
 	}
 	return scope == ScopeProfile
+}
+
+// flowStatusLineEnabled applies the default (on in profile scope unless the
+// statusLine copy is disabled) when the choice is unset. Only profile scope
+// ever wraps the statusLine.
+func flowStatusLineEnabled(choice *bool, scope string, noStatusLine bool) bool {
+	if scope != ScopeProfile {
+		return false
+	}
+	if choice != nil {
+		return *choice
+	}
+	return !noStatusLine
+}
+
+// FlowStatusLineCommand renders the profile statusLine command for binary and
+// the state file holding the base command, in the Git Bash shell form the
+// flow hooks use.
+func FlowStatusLineCommand(binary, statePath string) string {
+	return fmt.Sprintf("\"%s\" statusline-wrap --state \"%s\"", filepath.ToSlash(binary), filepath.ToSlash(statePath))
+}
+
+// flowStatusLineValue returns the wrapper statusLine: every field of base
+// (such as padding) with type and command replaced by the pcs wrapper.
+func flowStatusLineValue(binary, statePath string, base json.RawMessage) json.RawMessage {
+	v := map[string]any{}
+	if len(base) > 0 {
+		_ = json.Unmarshal(base, &v)
+	}
+	if v == nil {
+		v = map[string]any{}
+	}
+	v["type"] = "command"
+	v["command"] = FlowStatusLineCommand(binary, statePath)
+	b, _ := json.Marshal(v)
+	return b
+}
+
+// statusLineCommand returns the command of a statusLine value, or "".
+func statusLineCommand(raw json.RawMessage) string {
+	var v struct {
+		Command string `json:"command"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	return strings.TrimSpace(v.Command)
+}
+
+// isFlowStatusLineValue reports whether a statusLine value is a pcs wrapper.
+func isFlowStatusLineValue(raw json.RawMessage) bool {
+	return strings.Contains(statusLineCommand(raw), "statusline-wrap")
+}
+
+// readStatusLineValue returns the raw statusLine of a settings.json and
+// whether it is present. A missing file has none.
+func readStatusLineValue(path string) (json.RawMessage, bool, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if strings.TrimSpace(string(b)) == "" {
+		return nil, false, nil
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(b, &root); err != nil {
+		return nil, false, fmt.Errorf("invalid JSON in %s: %w", path, err)
+	}
+	v, ok := root["statusLine"]
+	if !ok || string(v) == "null" {
+		return nil, false, nil
+	}
+	return v, true, nil
+}
+
+// writeStatusLineValue sets (or, for an empty value, removes) the statusLine
+// of a settings.json, preserving every other key. It writes only when the
+// value changes, takes a one-time .pre-pcs.bak backup of an existing file when
+// backup is true, and reports whether it created the file.
+func writeStatusLineValue(path string, value json.RawMessage, backup bool) (bool, error) {
+	perm := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		perm = info.Mode().Perm()
+	}
+	raw, err := os.ReadFile(path)
+	existed := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, err
+	}
+	root := map[string]any{}
+	if strings.TrimSpace(string(raw)) != "" {
+		if err := json.Unmarshal(raw, &root); err != nil {
+			return false, fmt.Errorf("invalid JSON in %s: %w", path, err)
+		}
+		if root == nil {
+			root = map[string]any{}
+		}
+	}
+	if len(value) == 0 {
+		if _, ok := root["statusLine"]; !ok {
+			return false, nil
+		}
+		delete(root, "statusLine")
+	} else {
+		var v any
+		if err := json.Unmarshal(value, &v); err != nil {
+			return false, err
+		}
+		before, _ := json.Marshal(root["statusLine"])
+		if after, _ := json.Marshal(v); existed && string(after) == string(before) {
+			return false, nil
+		}
+		root["statusLine"] = v
+	}
+	if existed && backup {
+		if err := mcp.WritePrePCSBackupOnce(path, raw, perm); err != nil {
+			return false, err
+		}
+	}
+	encoded, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(encoded, '\n'), perm); err != nil {
+		return false, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return false, err
+	}
+	return !existed, nil
+}
+
+// restoreFlowStatusLine puts back the statusLine pcs wrapped (removing it when
+// there was none) while the profile still holds the pcs wrapper. A statusLine
+// the user changed since is kept and reported.
+func restoreFlowStatusLine(layout *resolvedLayout, base json.RawMessage, report *Report) error {
+	current, present, err := readStatusLineValue(layout.settingsJSONPath)
+	if err != nil {
+		return fmt.Errorf("read statusLine: %w", err)
+	}
+	if !present || !isFlowStatusLineValue(current) {
+		if present {
+			report.Warnings = append(report.Warnings,
+				fmt.Sprintf("kept statusLine in %s because it is no longer the pcs statusline-wrap command", layout.settingsJSONPath))
+		}
+		return nil
+	}
+	if _, err := writeStatusLineValue(layout.settingsJSONPath, base, false); err != nil {
+		return fmt.Errorf("restore statusLine: %w", err)
+	}
+	report.Actions = append(report.Actions, Action{Operation: "restore-statusline", Path: layout.settingsJSONPath})
+	return nil
 }
 
 // resolveHookBinary returns the absolute pcs binary the flow hooks run, plus a
@@ -1296,9 +1529,19 @@ func Uninstall(opts Options) (*Report, error) {
 		}
 	}
 
-	// 4. Remove the statusLine pcs copied first, so the unmerge below deletes a
-	// settings.json that pcs created once nothing else is left in it.
-	if savedState != nil && savedState.AddedStatusLine {
+	// 4. Restore the statusLine pcs wrapped, then remove the statusLine pcs
+	// copied, so the unmerge below deletes a settings.json that pcs created
+	// once nothing else is left in it.
+	wrappedDryRun := false
+	if savedState != nil && savedState.AddedFlowStatusLine {
+		if opts.DryRun {
+			wrappedDryRun = true
+			report.Actions = append(report.Actions, Action{Operation: "restore-statusline", Path: layout.settingsJSONPath, Detail: "dry-run"})
+		} else if err := restoreFlowStatusLine(layout, savedState.FlowStatusLineBase, report); err != nil {
+			return nil, err
+		}
+	}
+	if savedState != nil && savedState.AddedStatusLine && !wrappedDryRun {
 		uninstallStatusLine(layout, savedState, opts.DryRun, report)
 	}
 

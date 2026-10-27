@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/yorth21/pcs/internal/flow"
 	"github.com/yorth21/pcs/internal/mcp"
 	"github.com/yorth21/pcs/internal/registry"
 )
@@ -596,14 +598,15 @@ func TestProfileScopeLauncherIsolationAndSharedMCP(t *testing.T) {
 		t.Errorf("main profile .claude.json was modified!\ngot:  %s\nwant: %s", string(afterMainJSON), mainClaudeJSONContent)
 	}
 
-	// 3. Verify statusLine was copied into profile's settings.json
+	// 3. Verify the main statusLine command became the base of the pcs
+	// statusline-wrap command in the profile's settings.json.
 	profileSettingsPath := filepath.Join(profileDir, "settings.json")
 	profSettingsData, err := os.ReadFile(profileSettingsPath)
 	if err != nil {
 		t.Fatalf("failed to read profile settings.json: %v", err)
 	}
-	if !strings.Contains(string(profSettingsData), "echo profile:gentle") {
-		t.Errorf("expected statusLine to be copied into profile settings.json:\n%s", string(profSettingsData))
+	if !strings.Contains(string(profSettingsData), "statusline-wrap") || profState.FlowStatusLineBaseCommand != "echo profile:gentle" {
+		t.Errorf("expected the wrapped statusLine with base %q, got base %q:\n%s", "echo profile:gentle", profState.FlowStatusLineBaseCommand, string(profSettingsData))
 	}
 
 	// 4. Verify launchers were created in launcherDir. Their runtime behavior
@@ -808,4 +811,142 @@ func TestFlowHooksOptOutAndOtherScopes(t *testing.T) {
 			t.Fatal("dry run wrote settings.json")
 		}
 	})
+}
+
+func TestFlowStatusLineWrapLifecycle(t *testing.T) {
+	home := isolateEnv(t)
+	mainValue := map[string]any{"type": "command", "command": "echo main", "padding": float64(2)}
+	writeSettings(t, filepath.Join(home, ".claude"), map[string]any{"statusLine": mainValue})
+	mainSnapshot := snapshotTree(t, filepath.Join(home, ".claude"))
+	target := filepath.Join(home, ".claude-pcs")
+	statePath := filepath.Join(target, StateFileName)
+	settings := filepath.Join(target, "settings.json")
+	opts := Options{Scope: ScopeProfile, HomeDir: home, LauncherDir: filepath.Join(home, "bin")}
+	sync := func(choice *bool) {
+		t.Helper()
+		o := opts
+		o.FlowStatusLine = choice
+		o.FlagOverrides = map[string]bool{"scope": true}
+		if _, err := Sync(o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wantWrapped := func() {
+		t.Helper()
+		got, _ := readSettings(t, target)["statusLine"].(map[string]any)
+		if got["command"] != FlowStatusLineCommand(testHookBinary, statePath) || got["type"] != "command" || got["padding"] != float64(2) {
+			t.Fatalf("statusLine = %v, want the pcs wrapper keeping padding", got)
+		}
+		if base := flow.ReadStatusLineBase(statePath); base != "echo main" {
+			t.Fatalf("recorded base command = %q", base)
+		}
+	}
+
+	if _, err := Install(opts); err != nil {
+		t.Fatal(err)
+	}
+	wantWrapped()
+	st := mustReadState(t, target)
+	if st.FlowStatusLine == nil || !*st.FlowStatusLine || !st.AddedFlowStatusLine {
+		t.Fatalf("state = %+v", st)
+	}
+
+	// Sync is idempotent.
+	before, _ := os.ReadFile(settings)
+	sync(nil)
+	sync(nil)
+	if after, _ := os.ReadFile(settings); string(after) != string(before) {
+		t.Fatalf("sync changed settings.json:\n%s\n---\n%s", before, after)
+	}
+	wantWrapped()
+
+	// Opting out restores the base exactly; opting in wraps it again.
+	sync(BoolPtr(false))
+	if got := readSettings(t, target)["statusLine"]; !reflect.DeepEqual(got, mainValue) {
+		t.Fatalf("restored statusLine = %v, want %v", got, mainValue)
+	}
+	if st := mustReadState(t, target); st.AddedFlowStatusLine || st.FlowStatusLineBaseCommand != "" {
+		t.Fatalf("state after opt-out = %+v", st)
+	}
+	sync(nil) // the opt-out is remembered
+	if got := readSettings(t, target)["statusLine"]; !reflect.DeepEqual(got, mainValue) {
+		t.Fatalf("sync re-wrapped despite the saved opt-out: %v", got)
+	}
+	sync(BoolPtr(true))
+	wantWrapped()
+
+	if _, err := Uninstall(opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(settings); !os.IsNotExist(err) {
+		t.Fatalf("settings.json pcs created survives uninstall: %s", readSettings(t, target))
+	}
+	if after := snapshotTree(t, filepath.Join(home, ".claude")); !reflect.DeepEqual(after, mainSnapshot) {
+		t.Fatal("main ~/.claude profile changed")
+	}
+}
+
+func TestFlowStatusLineRestoresProfileOwnStatusLine(t *testing.T) {
+	home := isolateEnv(t)
+	target := filepath.Join(home, ".claude-pcs")
+	own := map[string]any{"command": "echo mine"}
+	writeSettings(t, target, map[string]any{"statusLine": own, "theme": "dark"})
+	opts := Options{Scope: ScopeProfile, HomeDir: home, LauncherDir: filepath.Join(home, "bin"), FlowHooks: BoolPtr(false)}
+	if _, err := Install(opts); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustReadState(t, target).FlowStatusLineBaseCommand; got != "echo mine" {
+		t.Fatalf("base command = %q", got)
+	}
+	if _, err := Uninstall(opts); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readSettings(t, target), map[string]any{"statusLine": own, "theme": "dark"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("settings after uninstall = %v, want %v", got, want)
+	}
+}
+
+func TestFlowStatusLineDefaults(t *testing.T) {
+	t.Run("--no-statusline disables it unless explicitly enabled", func(t *testing.T) {
+		home := isolateEnv(t)
+		target := filepath.Join(home, ".claude-pcs")
+		opts := Options{Scope: ScopeProfile, HomeDir: home, LauncherDir: filepath.Join(home, "bin"), NoStatusLine: true}
+		if _, err := Install(opts); err != nil {
+			t.Fatal(err)
+		}
+		if _, has := readSettings(t, target)["statusLine"]; has {
+			t.Fatal("statusLine written despite --no-statusline")
+		}
+		opts.FlowStatusLine = BoolPtr(true)
+		if _, err := Install(opts); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := readSettings(t, target)["statusLine"].(map[string]any)
+		if !isFlowStatusLineValue(mustJSON(t, got)) || mustReadState(t, target).FlowStatusLineBaseCommand != "" {
+			t.Fatalf("statusLine = %v, want the wrapper without a base", got)
+		}
+	})
+	t.Run("workspace scope never wraps", func(t *testing.T) {
+		isolateEnv(t)
+		ws := t.TempDir()
+		rep, err := Install(Options{Scope: ScopeWorkspace, TargetDir: ws, FlowStatusLine: BoolPtr(true)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(strings.Join(rep.Warnings, "\n"), "--with-flow-statusline applies only") {
+			t.Fatalf("warnings = %v", rep.Warnings)
+		}
+		if _, has := readSettings(t, filepath.Join(ws, ".claude"))["statusLine"]; has {
+			t.Fatal("workspace statusLine written")
+		}
+	})
+}
+
+func mustJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

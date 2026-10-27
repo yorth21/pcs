@@ -192,4 +192,5 @@ Subcommands:
   record --phase <p> --status done|blocked [--agent-id x]
                                                       Manually record a phase (source: manual)
   close [--abandon --reason "..."]                    Close the active flow
+  statusline [--cwd <dir>]                            Print the one-line active flow segment (never fails)
 `
