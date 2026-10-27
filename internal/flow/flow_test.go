@@ -23,7 +23,7 @@ func TestNextTransitions(t *testing.T) {
 		{name: "audit starts with explore", kind: KindAudit, wantKind: TransitionDelegate, wantPhase: "explore", wantAgent: "pcs-explorer", wantText: "Delegate to subagent pcs-explorer for feature demo"},
 		{name: "audit after explore", kind: KindAudit, done: []string{"explore"}, wantKind: TransitionDelegate, wantPhase: "audit", wantAgent: "pcs-auditor", wantText: "or pcs-verifier"},
 		{name: "audit complete", kind: KindAudit, done: []string{"explore", "audit"}, wantKind: TransitionClose, wantText: "pcs flow close"},
-		{name: "t2 middle", kind: KindT2, done: []string{"explore", "strategy"}, wantKind: TransitionDelegate, wantPhase: "architecture", wantAgent: "pcs-architect"},
+		{name: "t2 middle", kind: KindT2, done: []string{"explore", "strategy"}, wantKind: TransitionDelegate, wantPhase: "compose", wantAgent: "pcs-architect"},
 		{name: "t3 blocked phase", kind: KindT3, status: map[string]string{"explore": StatusBlocked}, wantKind: TransitionDelegate, wantPhase: "explore", wantText: "is blocked"},
 		{name: "unverified phase", kind: KindT2, status: map[string]string{"explore": StatusUnverified}, wantKind: TransitionDelegate, wantPhase: "explore", wantText: "unverified"},
 		{name: "inline closes with budget note", kind: KindInline, wantKind: TransitionClose, wantText: "Inline flow demo"},

@@ -265,7 +265,20 @@ func (g gate) agent(in Input) (any, error) {
 		return deny(fmt.Sprintf("PCD flow %s (%s): %s (phase %s) cannot run before phase %s is done. Next: %s",
 			f.Feature, f.Kind, agent, f.Phases[idx].Name, missing[0], f.Next().Instruction)), nil
 	}
-	return nil, nil
+	phase := f.Phases[idx].Name
+	if running, ok := f.Running(agent, phase); ok {
+		return deny(DuplicateLaunchReason(f, running)), nil
+	}
+	// Record the allowed launch so a background run keeps Stop from blocking
+	// until its SubagentStop clears it (or InFlightTTL expires).
+	return nil, g.store.StartDelegation(f, agent, phase)
+}
+
+// DuplicateLaunchReason is the denial reason for relaunching a pcs-* subagent
+// whose previous launch for the same phase is still running.
+func DuplicateLaunchReason(f *flow.Flow, e flow.InFlight) string {
+	return fmt.Sprintf("PCD flow %s (%s): %s is already running for phase %s (started %s). Wait for its completion notification; do not relaunch it. Its Return Envelope status is recorded automatically when it stops.",
+		f.Feature, f.Kind, e.AgentType, e.Phase, e.StartedAt)
 }
 
 // denyGenericAgent blocks generic subagents (Explore, general-purpose, fork,
@@ -561,9 +574,10 @@ const AwaitEscape = "If you need the user's decision, run `" + flow.AwaitCommand
 
 func stop(store flow.Store, in Input) (any, error) {
 	f, _, err := sessionFlow(store, in.SessionID)
-	if in.StopHookActive || err != nil || f == nil || f.AwaitingUser != nil {
-		// A flow owned by another session never blocks this session, and a
-		// flow awaiting the user's answer lets the turn end.
+	if in.StopHookActive || err != nil || f == nil || f.AwaitingUser != nil || f.HasLiveInFlight() {
+		// A flow owned by another session never blocks this session, a flow
+		// awaiting the user's answer lets the turn end, and so does a flow
+		// whose delegated subagent is still running in the background.
 		return nil, err
 	}
 	if f.Complete() {

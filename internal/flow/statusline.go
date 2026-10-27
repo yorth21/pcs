@@ -32,7 +32,8 @@ type StatusLineInput struct {
 }
 
 // Segment returns the one-line status of the active flow, e.g.
-// "pcs:checkout t2 ▸ apply 4/5" or "pcs:x audit ▸ awaiting user", or "" when
+// "pcs:checkout t2 ▸ apply 4/5", "pcs:x t2 ▸ verify 5/5 running fix 1/3", or
+// "pcs:x audit ▸ awaiting user", or "" when
 // no flow is active. A flow owned by another session is marked as such.
 func Segment(f *Flow, session string) string {
 	if f == nil || f.Closed() {
@@ -54,6 +55,12 @@ func Segment(f *Flow, session string) string {
 		s := fmt.Sprintf("%s%s %d/%d", head, p.Name, i+1, len(f.Phases))
 		if p.Status != StatusPending {
 			s += " " + p.Status
+		}
+		if f.HasLiveInFlight() {
+			s += " running"
+		}
+		if f.FixRounds > 0 {
+			s += fmt.Sprintf(" fix %d/%d", f.FixRounds, MaxFixRounds)
 		}
 		return s
 	}

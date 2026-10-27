@@ -177,6 +177,8 @@ func TestAdoptThenClaim(t *testing.T) {
 	if got := owner(t, root); got != "B" {
 		t.Fatalf("owner = %q, want B", got)
 	}
+	// The delegation finishes; with the audit phase pending, Stop blocks B.
+	runHook(t, "subagent-stop", map[string]any{"cwd": root, "session_id": "B", "agent_id": "e1", "agent_type": "pcs-explorer", "last_assistant_message": "**Status**: success"})
 	if out := runHook(t, "stop", map[string]any{"cwd": root, "session_id": "B"}); !strings.Contains(out, `"block"`) {
 		t.Fatalf("adopting session stop = %q", out)
 	}

@@ -51,6 +51,12 @@ const (
 	TransitionStart    = "start"
 	TransitionDelegate = "delegate"
 	TransitionClose    = "close"
+	// TransitionWait means a delegated subagent is still running: wait for its
+	// completion notification and do not relaunch it.
+	TransitionWait = "wait"
+	// TransitionAwait means the coordinator must present a decision to the
+	// user and run AwaitCommand.
+	TransitionAwait = "await"
 )
 
 // InlineReadBudget is the maximum number of counted main-thread source reads
@@ -121,7 +127,7 @@ type Run struct {
 const PhaseVerify = "verify"
 
 // VerifyPartialNote explains why a partial verify result blocks the phase.
-const VerifyPartialNote = "verify requires Return Envelope status success; partial means unresolved findings (Severity 3-4 hard gate). Fix them and relaunch the verifier."
+const VerifyPartialNote = "verify requires Return Envelope status success; partial means unresolved findings (Severity 3-4 hard gate). pcs flow next runs the bounded fix loop."
 
 // StatusFromEnvelope maps a Return Envelope status to the phase status it
 // earns for phase, with a note when the mapping needs explanation. verify is
@@ -163,6 +169,12 @@ type Flow struct {
 	// the human to answer one blocking question; the Stop hook does not block
 	// then, and the next UserPromptSubmit of the owning session clears it.
 	AwaitingUser *Await `json:"awaiting_user,omitempty"`
+	// FixRounds counts the pcs-builder runs recorded while verify was blocked
+	// (see MaxFixRounds).
+	FixRounds int `json:"fix_rounds,omitempty"`
+	// InFlight lists the pcs-* delegations launched from the main thread that
+	// have not stopped yet, oldest first (see InFlightTTL).
+	InFlight []InFlight `json:"in_flight,omitempty"`
 }
 
 // Await is the blocking question the coordinator is waiting on.
@@ -227,9 +239,9 @@ type phaseDef struct {
 var buildPhases = []phaseDef{
 	{"explore", []string{"pcs-explorer"}},
 	{"strategy", []string{"pcs-strategist"}},
-	{"architecture", []string{"pcs-architect"}},
-	{"apply", []string{"pcs-builder"}},
-	{"verify", []string{"pcs-verifier"}},
+	{PhaseCompose, []string{"pcs-architect"}},
+	{PhaseApply, []string{"pcs-builder"}},
+	{PhaseVerify, []string{"pcs-verifier"}},
 }
 
 var kindPhases = map[string][]phaseDef{
@@ -352,9 +364,17 @@ func (f *Flow) Next() Transition {
 	if f == nil || f.Closed() {
 		return NoFlowTransition()
 	}
+	if live := f.LiveInFlight(); len(live) > 0 {
+		return waitTransition(f, live[0])
+	}
 	for _, p := range f.Phases {
 		if p.Status == StatusDone {
 			continue
+		}
+		if p.Name == PhaseVerify && p.Status == StatusBlocked {
+			if t, ok := f.fixTransition(); ok {
+				return t
+			}
 		}
 		agent := p.Agents[0]
 		alt := ""
@@ -591,7 +611,9 @@ func (s Store) Record(phase, status, agentID, envelopeStatus, source string) (*F
 
 // RecordRun appends run to phase on the active flow and updates the phase
 // status monotonically: a done phase never goes back to blocked or
-// unverified, while a blocked or unverified phase can still become done.
+// unverified, while a blocked or unverified phase can still become done. A run
+// with an agent type also clears the oldest matching in-flight delegation, and
+// an apply run while verify is blocked is a fix round (see applyFixRound).
 func (s Store) RecordRun(phase string, run Run) (*Flow, error) {
 	f, err := s.Active()
 	if err != nil {
@@ -614,6 +636,10 @@ func (s Store) RecordRun(phase string, run Run) (*Flow, error) {
 		return nil, fmt.Errorf("invalid phase status %q", run.Status)
 	}
 	run.RecordedAt = Now().Format(time.RFC3339)
+	if run.AgentType != "" {
+		f.finishDelegation(run.AgentType)
+	}
+	f.applyFixRound(phase, run)
 	p := &f.Phases[idx]
 	p.Runs = append(p.Runs, run)
 	if p.Status == StatusDone && run.Status != StatusDone {

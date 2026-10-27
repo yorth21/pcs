@@ -93,7 +93,7 @@ func TestNextDuplicateRunGuard(t *testing.T) {
 	}
 	b.Phases[4].Status = StatusBlocked
 	b.Phases[4].Note = VerifyPartialNote
-	if tr := b.Next(); tr.Phase != PhaseVerify || !strings.Contains(tr.Instruction, "Severity 3-4") {
+	if tr := b.Next(); tr.Phase != PhaseApply || tr.Agent != "pcs-builder" || !strings.Contains(tr.Note, "Severity 3-4") {
 		t.Fatalf("verify partial next = %+v", tr)
 	}
 }

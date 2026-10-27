@@ -161,6 +161,12 @@ func printView(w io.Writer, v StatusView) {
 		for _, p := range v.Flow.Phases {
 			fmt.Fprintf(w, "  - %s [%s] %s\n", p.Name, p.Status, strings.Join(p.Agents, " | "))
 		}
+		if _, _, ok := v.Flow.fixLoop(); ok && v.Flow.FixRounds > 0 {
+			fmt.Fprintf(w, "  fix rounds: %d/%d\n", v.Flow.FixRounds, MaxFixRounds)
+		}
+		for _, e := range v.Flow.LiveInFlight() {
+			fmt.Fprintf(w, "  running: %s (phase %s) since %s\n", e.AgentType, e.Phase, e.StartedAt)
+		}
 		if v.Flow.Kind == KindInline {
 			fmt.Fprintf(w, "  inline reads: %d/%d, inline files: %v\n", v.Flow.InlineReads, InlineReadBudget, v.Flow.InlineFiles)
 		}
@@ -185,7 +191,7 @@ const usage = `usage: pcs flow <subcommand> [--cwd <dir>] [--json]
 Subcommands:
   start --feature <kebab> --kind audit|inline|t2|t3   Start and activate a PCD flow (auto-abandons a flow idle for >12h)
   status                                              Show the active flow
-  next                                                Print the typed next transition
+  next                                                Print the typed next transition (start, delegate, wait, await, or close)
   adopt                                               Hand the active flow to the session that runs it
   await --question "..." [--session id]               Wait for the user's answer to one blocking question
                                                       (the Stop hook does not block until the user replies)

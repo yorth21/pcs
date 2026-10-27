@@ -94,7 +94,7 @@ func TestPreToolUseDecisions(t *testing.T) {
 		{name: "first phase agent allowed", kind: flow.KindAudit, tool: "Agent", input: map[string]any{"subagent_type": "pcs-explorer"}, want: "allow"},
 		{name: "out of order agent denied", kind: flow.KindAudit, tool: "Task", input: map[string]any{"subagent_type": "pcs-verifier"}, want: "deny", reasonPart: "before phase explore"},
 		{name: "auditor after explore allowed", kind: flow.KindAudit, done: []string{"explore"}, tool: "Agent", input: map[string]any{"subagent_type": "pcs-auditor"}, want: "allow"},
-		{name: "builder before architecture denied", kind: flow.KindT2, done: []string{"explore", "strategy"}, tool: "Agent", input: map[string]any{"subagent_type": "pcs-builder"}, want: "deny", reasonPart: "phase architecture"},
+		{name: "builder before compose denied", kind: flow.KindT2, done: []string{"explore", "strategy"}, tool: "Agent", input: map[string]any{"subagent_type": "pcs-builder"}, want: "deny", reasonPart: "phase compose"},
 		{name: "agent outside flow phases denied", kind: flow.KindAudit, tool: "Agent", input: map[string]any{"subagent_type": "pcs-builder"}, want: "deny", reasonPart: "has no phase"},
 		{name: "edit without flow denied", tool: "Edit", input: map[string]any{"file_path": "src/a.tsx"}, want: "deny"},
 		{name: "write spec under pcs/ allowed", tool: "Write", input: map[string]any{"file_path": "pcs/specs/demo.md"}, want: "allow"},

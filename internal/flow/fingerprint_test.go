@@ -81,7 +81,7 @@ func completeBuildFlow(t *testing.T, s Store) {
 	if _, err := s.Start("demo", KindT2); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{"explore", "strategy", "architecture", "apply", "verify"} {
+	for _, p := range []string{"explore", "strategy", "compose", "apply", "verify"} {
 		run := Run{Status: StatusDone, EnvelopeStatus: "success", Source: SourceHook}
 		if p == PhaseVerify {
 			run.Fingerprint = Fingerprint(s.Root)
@@ -126,7 +126,7 @@ func TestCloseSkipsBindingWithoutFingerprint(t *testing.T) {
 	if _, err := s.Start("demo", KindT2); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{"explore", "strategy", "architecture", "apply", "verify"} {
+	for _, p := range []string{"explore", "strategy", "compose", "apply", "verify"} {
 		fp := ""
 		if p == PhaseVerify {
 			fp = FingerprintUnavailable

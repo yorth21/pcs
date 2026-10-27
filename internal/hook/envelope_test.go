@@ -121,7 +121,7 @@ func TestSubagentStopVerifyAcceptance(t *testing.T) {
 			root := newProject(t)
 			startFlow(t, root, flow.KindT2)
 			s := flow.Store{Root: root}
-			for _, p := range []string{"explore", "strategy", "architecture", "apply"} {
+			for _, p := range []string{"explore", "strategy", "compose", "apply"} {
 				if _, err := s.Record(p, flow.StatusDone, "", "", flow.SourceManual); err != nil {
 					t.Fatal(err)
 				}
