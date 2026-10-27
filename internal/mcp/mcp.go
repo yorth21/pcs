@@ -67,14 +67,29 @@ type UnmergeDelta struct {
 	ForceRemoveAllMCP bool
 }
 
-// ResolveEngramBinary returns the preferred engram executable path, checking
-// PATH via LookPathFunc first before falling back to /opt/homebrew/bin/engram.
-func ResolveEngramBinary() string {
+// EngramFallbackPaths lists absolute engram locations checked when the PATH
+// lookup fails. Tests replace it to make engram resolution deterministic.
+var EngramFallbackPaths = []string{"/opt/homebrew/bin/engram"}
+
+// LookupEngramBinary returns the engram executable path, checking PATH via
+// LookPathFunc first and then EngramFallbackPaths, and whether one was found.
+func LookupEngramBinary() (string, bool) {
 	if p, err := LookPathFunc("engram"); err == nil && p != "" {
-		return p
+		return p, true
 	}
-	if _, err := os.Stat("/opt/homebrew/bin/engram"); err == nil {
-		return "/opt/homebrew/bin/engram"
+	for _, p := range EngramFallbackPaths {
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// ResolveEngramBinary returns the preferred engram executable path (see
+// LookupEngramBinary), or the bare command name when none is found.
+func ResolveEngramBinary() string {
+	if p, ok := LookupEngramBinary(); ok {
+		return p
 	}
 	return "engram"
 }
@@ -555,26 +570,45 @@ func ReadMainProfileMCPServers(mainClaudeJSONPath string) (map[string]any, bool,
 
 // GenerateSharedMCPFile writes the shared MCP configuration to outPath with 0o600 permissions.
 // If mainClaudeJSONPath contains configured mcpServers, they are reused directly; otherwise,
-// default pcs components (engram, context7, codegraph) are generated.
-func GenerateSharedMCPFile(outPath, mainClaudeJSONPath string) error {
+// default pcs components (engram, context7, codegraph) are generated. The main
+// file is only read. Every pcs agent requires Engram, so when the main profile
+// defines no engram server (for example because it uses the engram@engram
+// plugin), an engram server pointing at the resolved engram binary is added.
+// When no engram binary resolves, no engram entry is written and engramMissing
+// is true.
+func GenerateSharedMCPFile(outPath, mainClaudeJSONPath string) (engramMissing bool, err error) {
 	servers, found, err := ReadMainProfileMCPServers(mainClaudeJSONPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !found || len(servers) == 0 {
 		servers = make(map[string]any)
 		for _, comp := range DefaultComponents {
+			if comp == ServerEngram {
+				continue
+			}
 			def, defErr := ServerDefinition(comp)
 			if defErr != nil {
-				return defErr
+				return false, defErr
 			}
 			servers[comp] = def
+		}
+	}
+	if _, hasEngram := servers[ServerEngram]; !hasEngram {
+		if _, ok := LookupEngramBinary(); ok {
+			def, defErr := ServerDefinition(ServerEngram)
+			if defErr != nil {
+				return false, defErr
+			}
+			servers[ServerEngram] = def
+		} else {
+			engramMissing = true
 		}
 	}
 	payload := map[string]any{
 		"mcpServers": servers,
 	}
-	return writeJSONAtomicWithPerm(outPath, payload, 0o600)
+	return engramMissing, writeJSONAtomicWithPerm(outPath, payload, 0o600)
 }
 
 // CopyStatusLineIfMissing copies statusLine from mainSettingsJSONPath into targetSettingsJSONPath
@@ -668,7 +702,9 @@ func PluginEnabled(settingsJSONPath, plugin string) (bool, error) {
 // SharedMCPDrift compares the mcpServers in sharedMCPPath with the main
 // profile's mcpServers and returns the sorted names of servers that are
 // missing, extra, or different. It returns nil when they match, or when the main
-// profile defines no servers (shared-mcp.json then holds the pcs defaults).
+// profile defines no servers (shared-mcp.json then holds the pcs defaults). An
+// engram server is not drift when the main profile defines none, because
+// GenerateSharedMCPFile adds it.
 func SharedMCPDrift(sharedMCPPath, mainClaudeJSONPath string) ([]string, error) {
 	mainServers, found, err := ReadMainProfileMCPServers(mainClaudeJSONPath)
 	if err != nil || !found {
@@ -686,7 +722,7 @@ func SharedMCPDrift(sharedMCPPath, mainClaudeJSONPath string) ([]string, error) 
 		}
 	}
 	for name := range shared {
-		if _, ok := mainServers[name]; !ok {
+		if _, ok := mainServers[name]; !ok && name != ServerEngram {
 			drift = append(drift, name)
 		}
 	}

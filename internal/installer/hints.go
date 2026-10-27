@@ -11,6 +11,8 @@ const (
 	// EngramMarketplaceSource is the GitHub repository that hosts the engram
 	// plugin marketplace; it must be added to a profile before its plugin.
 	EngramMarketplaceSource = "Gentleman-Programming/engram"
+	// EngramProjectURL documents how to install the engram binary.
+	EngramProjectURL = "https://github.com/" + EngramMarketplaceSource
 	// EngramPlugin is the plugin identifier installed by --with-plugins.
 	EngramPlugin = "engram@engram"
 )

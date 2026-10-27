@@ -140,6 +140,8 @@ func TestDoctorProfileAuthenticationCheck(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := isolateDoctorEnv(t)
+			// A resolvable engram keeps the Engram source check healthy.
+			stubInstallEngram(t, "/usr/bin/engram")
 			target := installProfile(t, home, false)
 			if tt.withCreds {
 				writeJSON(t, filepath.Join(target, ".credentials.json"), map[string]any{})

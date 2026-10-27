@@ -836,10 +836,15 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 	}
 
 	if layout.scope == ScopeProfile && layout.sharedMCPPath != "" {
+		// engramMissing records that shared-mcp.json got no engram server because
+		// no engram binary resolved; a successful --with-plugins provides Engram.
+		engramMissing := false
 		if !opts.DryRun {
-			if err := mcp.GenerateSharedMCPFile(layout.sharedMCPPath, layout.mainClaudeJSONPath); err != nil {
+			missing, err := mcp.GenerateSharedMCPFile(layout.sharedMCPPath, layout.mainClaudeJSONPath)
+			if err != nil {
 				return nil, fmt.Errorf("generate shared-mcp.json: %w", err)
 			}
+			engramMissing = missing
 		}
 		sharedMCPFile = layout.sharedMCPPath
 		recordFile("write-shared-mcp", layout.sharedMCPPath, "shared MCP configuration (0600)")
@@ -871,8 +876,15 @@ func applyInstall(opts Options, opName string) (*Report, error) {
 			} else if failures := installRequiredPlugins(runtime.GOOS, layout.targetDir); len(failures) > 0 {
 				detail += " (failed; see warnings)"
 				report.Warnings = append(report.Warnings, failures...)
+			} else {
+				engramMissing = false
 			}
 			report.Actions = append(report.Actions, Action{Operation: "install-plugins", Path: layout.targetDir, Detail: detail})
+		}
+		if engramMissing {
+			report.Warnings = append(report.Warnings, fmt.Sprintf(
+				"no engram binary found and the main profile defines no engram MCP server, so %s has no engram server and pcs agents cannot use Engram memory; install engram (%s) and run 'pcs sync --scope profile', or run 'pcs sync --scope profile --with-plugins'",
+				layout.sharedMCPPath, EngramProjectURL))
 		}
 
 		scripts := renderLaunchers(layout.targetDir, layout.sharedMCPPath, launcherArgList)

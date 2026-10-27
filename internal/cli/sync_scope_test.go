@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/yorth21/pcs/internal/mcp"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -28,6 +29,10 @@ func isolateCLIEnv(t *testing.T) string {
 	t.Setenv("PCS_INSTALL_SCOPE", "")
 	// PATH holds only an empty directory, so no real claude (or other tool) is found.
 	t.Setenv("PATH", t.TempDir())
+	// Engram resolution must not see a real engram installed on the host.
+	origFallback := mcp.EngramFallbackPaths
+	mcp.EngramFallbackPaths = nil
+	t.Cleanup(func() { mcp.EngramFallbackPaths = origFallback })
 	return home
 }
 

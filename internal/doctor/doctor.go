@@ -229,6 +229,10 @@ func Run(opts Options) (*DiagnosticReport, error) {
 				addCheck("profile", "shared-mcp.json", "warn", "shared-mcp.json missing. Run 'pcs sync --scope profile' to generate it")
 			}
 
+			// Profile check 2c: every pcs agent requires Engram, provided either by an
+			// engram server in shared-mcp.json or by the engram@engram plugin.
+			addEngramSourceCheck(addCheck, sharedMCP, status.SettingsJSONPath, targetDir)
+
 			// Profile check 3: plugins requested with --with-plugins are enabled in the profile.
 			if status.State != nil && status.State.WithPlugins {
 				enabled, err := mcp.PluginEnabled(status.SettingsJSONPath, installer.EngramPlugin)
@@ -258,6 +262,23 @@ func Run(opts Options) (*DiagnosticReport, error) {
 	}
 
 	return report, nil
+}
+
+// addEngramSourceCheck reports an error when the profile has no Engram source:
+// neither an engram server in shared-mcp.json nor enabledPlugins["engram@engram"]
+// in the profile settings.json.
+func addEngramSourceCheck(addCheck func(cat, name, status, detail string), sharedMCP, settingsPath, targetDir string) {
+	servers, err := mcp.InspectConfiguredServers(sharedMCP)
+	if err == nil && servers[mcp.ServerEngram] {
+		addCheck("profile", "engram", "ok", fmt.Sprintf("Engram provided by the engram MCP server in %s", sharedMCP))
+		return
+	}
+	if enabled, pluginErr := mcp.PluginEnabled(settingsPath, installer.EngramPlugin); pluginErr == nil && enabled {
+		addCheck("profile", "engram", "ok", fmt.Sprintf("Engram provided by the %s plugin enabled in %s", installer.EngramPlugin, settingsPath))
+		return
+	}
+	addCheck("profile", "engram", "error", fmt.Sprintf("no Engram source for the profile %s: %s has no engram MCP server and %s is not enabled in %s. Install engram (%s) and run 'pcs sync --scope profile', or run 'pcs sync --scope profile --with-plugins'",
+		targetDir, sharedMCP, installer.EngramPlugin, settingsPath, installer.EngramProjectURL))
 }
 
 func inferScope(targetDir string) string {
