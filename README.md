@@ -103,6 +103,21 @@ make build
 ./bin/pcs doctor
 ```
 
+### Daily Use (profile scope)
+
+Open `claude-pcs` in the frontend repository and ask in plain language. The coordinator and the installed hooks drive the rest:
+
+| You ask | Flow kind | What happens |
+|---|---|---|
+| "Review the UI of feature X" | `audit` | `pcs-explorer`, then `pcs-auditor` (a Playwright visual pass when the dev server is up), then the report in `pcs/audits/<feature>.md` |
+| "Fix this label / aria / token" | `inline` | the coordinator edits at most 1 file, after at most 3 source reads |
+| "Build or improve feature X" | `t2` / `t3` | explore → strategy → architecture → apply → verify, with the spec and tasks in `pcs/specs/` and `pcs/tasks/` |
+
+- When the coordinator needs a product decision, it runs `pcs flow await`, asks one question, and stops. Your answer resumes the flow.
+- Run `pcs flow status` in your own terminal to see where the agent is.
+- If a session died mid-flow, the next session is told to `pcs flow adopt` it or to `pcs flow close --abandon --reason "..."`. Flows idle for more than 12 hours are abandoned automatically on the next `pcs flow start`.
+- Give the dev server URL (and test credentials, if any) in the prompt so the auditor can inspect the running app. Credentials are never persisted.
+
 ### CLI Command Reference
 
 | Command | Purpose |

@@ -44,7 +44,20 @@ gentle-ai follows a "model proposes, CLI disposes" design. Its Go CLI returns a 
   - Rationale: PCD lets the coordinator ask at most one blocking question and then stop, but the `Stop` hook blocked ending the turn while phases were pending. In an interactive session the coordinator looped on stop-hook continuations up to the 8-block cap or fabricated the answer, which made pcs unusable in real interactive work.
   - Fix: `pcs flow await --question "..."` sets `awaiting_user` (question, `asked_at`) on the active flow owned by the caller's session (`$CLAUDE_CODE_SESSION_ID`, or `--session`); it requires a non-empty question, claims an unowned flow, and refuses a foreign one. `stop` does not block while `awaiting_user` is set, and its block reason names the escape. The owning session's next `user-prompt-submit` clears the mark and prefixes "The user answered your blocking question: continue the flow with `pcs flow next`." `pre-tool-use` is unchanged. Routing step 3 and the Lossless Blocking Prompts section run `await` before the question; non-interactive runs record a Declared Assumption instead.
   - Deviations: the CLI reads the session from `CLAUDE_CODE_SESSION_ID` (Claude Code sets it for Bash commands and it equals the hook `session_id`); without it, `await` behaves like a payload without `session_id` and is never foreign. A foreign `user-prompt-submit` keeps the owner's mark.
-- [ ] T4: Reinstall the profile from the branch build, then run the validation loop in credi-siian (audit and build prompts) and compare the results with gentle-ai patterns. Route: delegated verification.
+- [x] T4: Reinstall the profile from the branch build, then run the validation loop in credi-siian (audit and build prompts) and compare the results with gentle-ai patterns. Route: parent-run headless validation (`claude-pcs -p --output-format stream-json`), one run at a time after an OS low-memory kill of parallel runs.
+  - Baseline (before this feature): an audit of `perfil` made 10 main-thread Bash reads, 0 delegations, and no artifacts.
+  - Iteration 1 (audit of `perfil`, with the dev server): ran `pcs flow start`, then `pcs-explorer` and `pcs-auditor`, with 26 Playwright calls and a structured report. Bugs found: phases recorded as `unverified` (the transcript read), manual `pcs flow record`, a duplicate explorer run, and screenshots left in the project. Fixed in T5.
+  - Iteration 2: both runs were killed by low memory. Their orphaned processes left flows open, which blocked later sessions. Fixed in T6.
+  - Iteration 3:
+    - A `t2` build of the simulator focus and button hierarchy in an isolated worktree recorded all 5 phases through the hook (`success`/`partial` envelopes, one run each) and changed 3 files. The verifier found 0 Severity 3–4 issues, and the flow closed.
+    - An audit of `simulador-credito` (static, no dev server) recorded explore and audit through the hook, with 0 main-thread source reads. It wrote `pcs/audits/simulador-credito-audit.md`, saved Engram, and closed.
+  - Iteration 4 (interactive blocking question): the coordinator explored, ran `pcs flow await`, asked one closed question with evidence, and ended the turn. The resumed session (`--resume`, answer `1`) cleared the wait, ran strategy, architecture, apply and verify (all recorded by the hook), and closed the flow.
+  - The main `~/.claude` profile stayed byte-identical across every reinstall and sync.
+  - Remaining gaps compared with gentle-ai:
+    - no content-hash binding of review receipts;
+    - verifier Severity 3–4 is enforced only through the `partial` → blocked mapping;
+    - no status-line segment;
+    - subagents could still run `pcs flow record`.
 
 ## Acceptance Criteria
 - A read-only UI audit request produces a `pcs-explorer` and a `pcs-auditor`/`pcs-verifier` delegation, recorded in the flow state.
@@ -64,4 +77,4 @@ gentle-ai follows a "model proposes, CLI disposes" design. Its Go CLI returns a 
 - T7 verification (writer, Windows): `go vet ./...` clean; `go test ./...` all 9 test packages ok; `go build -o <scratchpad>/bin/pcs.exe ./cmd/pcs` ok. Smoke test in a temp project with a `t2` flow and session A: `stop` returned `decision: block` naming `pcs flow await --question \"...\"`; `await` without a question and `await` from session B exited 1; `await` from A printed the confirmation; `stop` printed nothing; `user-prompt-submit` returned the "The user answered your blocking question" context; `stop` blocked again.
 
 ## Next Step
-T4: reinstall the profile from the branch build and run the credi-siian validation loop.
+MVP complete. Follow-ups: a status-line flow segment, deny `pcs flow record` from subagents, and content-hash binding of verify results to the changed files.
