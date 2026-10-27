@@ -140,11 +140,36 @@ func TestResolveRoot(t *testing.T) {
 		t.Fatalf("git: root = %q, want %q", got, repo)
 	}
 	front := filepath.Join(repo, "src")
-	if err := os.Mkdir(filepath.Join(front, ".pcs"), 0o755); err != nil {
+	// A bare .pcs/playwright (Playwright MCP output under the session cwd)
+	// does not mark a root.
+	if err := os.MkdirAll(filepath.Join(front, ".pcs", "playwright"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveRoot(deep); got != repo {
+		t.Fatalf("bare .pcs/playwright: root = %q, want %q", got, repo)
+	}
+	if err := os.Mkdir(filepath.Join(front, ".pcs", "flows"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if got := ResolveRoot(deep); got != front {
-		t.Fatalf(".pcs: root = %q, want %q", got, front)
+		t.Fatalf(".pcs/flows: root = %q, want %q", got, front)
+	}
+}
+
+func TestResolveRootActiveMarker(t *testing.T) {
+	repo := t.TempDir()
+	sub := filepath.Join(repo, "app")
+	if err := os.MkdirAll(filepath.Join(sub, ".pcs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, ".pcs", "active"), []byte("demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveRoot(sub); got != sub {
+		t.Fatalf(".pcs/active: root = %q, want %q", got, sub)
 	}
 }
 

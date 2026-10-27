@@ -281,6 +281,50 @@ func TestUserPromptSubmit(t *testing.T) {
 	}
 }
 
+func TestCwdGitignore(t *testing.T) {
+	for _, event := range []string{"user-prompt-submit", "subagent-stop"} {
+		t.Run(event, func(t *testing.T) {
+			root := newProject(t)
+			front := filepath.Join(root, "src")
+			ignore := filepath.Join(front, ".pcs", ".gitignore")
+
+			// Without <cwd>/.pcs nothing is created.
+			runHook(t, event, map[string]any{"cwd": front})
+			if _, err := os.Stat(filepath.Join(front, ".pcs")); !os.IsNotExist(err) {
+				t.Fatalf(".pcs created without one: %v", err)
+			}
+
+			// A bare .pcs/playwright under the cwd gets a "*" .gitignore.
+			if err := os.MkdirAll(filepath.Join(front, ".pcs", "playwright"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			runHook(t, event, map[string]any{"cwd": front})
+			if b, err := os.ReadFile(ignore); err != nil || string(b) != "*\n" {
+				t.Fatalf(".gitignore = %q, %v", b, err)
+			}
+
+			// An existing .gitignore is kept.
+			if err := os.WriteFile(ignore, []byte("custom\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runHook(t, event, map[string]any{"cwd": front})
+			if b, _ := os.ReadFile(ignore); string(b) != "custom\n" {
+				t.Fatalf(".gitignore overwritten: %q", b)
+			}
+		})
+	}
+	// Other events never touch it.
+	root := newProject(t)
+	front := filepath.Join(root, "src")
+	if err := os.MkdirAll(filepath.Join(front, ".pcs", "playwright"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runHook(t, "pre-tool-use", map[string]any{"cwd": front, "tool_name": "Read", "tool_input": map[string]any{"file_path": "x"}})
+	if _, err := os.Stat(filepath.Join(front, ".pcs", ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("pre-tool-use wrote .gitignore: %v", err)
+	}
+}
+
 func TestFailOpen(t *testing.T) {
 	root := newProject(t)
 	if err := os.Mkdir(filepath.Join(root, ".pcs"), 0o755); err != nil {

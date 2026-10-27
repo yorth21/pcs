@@ -55,6 +55,9 @@ func Run(event string, stdin io.Reader, stdout io.Writer) int {
 	if strings.TrimSpace(in.Cwd) == "" {
 		in.Cwd, _ = os.Getwd()
 	}
+	if event == "user-prompt-submit" || event == "subagent-stop" {
+		ensureCwdGitignore(in.Cwd)
+	}
 	root := flow.ResolveRoot(in.Cwd)
 	store := flow.Store{Root: root}
 
@@ -79,6 +82,27 @@ func Run(event string, stdin io.Reader, stdout io.Writer) int {
 		_ = json.NewEncoder(stdout).Encode(out)
 	}
 	return 0
+}
+
+// ensureCwdGitignore writes <cwd>/.pcs/.gitignore with "*" when <cwd>/.pcs is
+// an existing directory without one. Tools such as the Playwright MCP create
+// .pcs/ under the session cwd, which may not be the pcs root. It is best
+// effort: it never creates .pcs itself and ignores every error.
+func ensureCwdGitignore(cwd string) {
+	dir := filepath.Join(cwd, ".pcs")
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return
+	}
+	path := filepath.Join(dir, ".gitignore")
+	if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	_, _ = f.WriteString("*\n")
+	_ = f.Close()
 }
 
 // logError appends to <root>/.pcs/hook-errors.log only when <root>/.pcs

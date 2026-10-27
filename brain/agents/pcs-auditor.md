@@ -23,6 +23,7 @@ Execute the audit directly:
 2. **Visual Pass (Playwright)**: Use the dev-server URL from the prompt, or probe `http://localhost:5173` and `http://localhost:3000` with `browser_navigate`. Never start or stop servers.
    - Log in only with credentials given in the prompt. Never echo credentials in the report, Engram, or any output.
    - For each viewport, `browser_resize` to `1440x900` and `390x844`, then `browser_snapshot` and `browser_take_screenshot` of key states (default, loading, empty, error, open dialog/sheet).
+   - Always pass `browser_take_screenshot` a `filename` of `.pcs/playwright/<name>.png` (for example `.pcs/playwright/sim-desktop-error.png`). Never pass a bare name or any other path: screenshots must stay out of the project tree.
    - Keyboard walk: `browser_press_key` `Tab` through the primary task; record focus order, visible focus, traps, and unreachable controls.
    - Read `browser_console_messages` for errors and warnings.
    - If no server responds or Playwright is unavailable, run the full static JSX/TSX audit and state `Visual Pass: Skipped (static fallback: <reason>)`.

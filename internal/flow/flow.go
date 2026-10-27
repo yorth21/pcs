@@ -677,8 +677,11 @@ func writeAtomic(path string, data []byte) error {
 	return nil
 }
 
-// ResolveRoot returns the project root for cwd: the nearest ancestor holding a
-// .pcs directory, else the nearest ancestor holding .git, else cwd itself.
+// ResolveRoot returns the project root for cwd: the nearest ancestor holding
+// pcs flow state (.pcs/flows/ or .pcs/active), else the nearest ancestor
+// holding .git, else cwd itself. A bare .pcs/ directory, such as the one the
+// Playwright MCP creates for .pcs/playwright under the session cwd, does not
+// mark a root, so it never moves the root away from the git toplevel.
 func ResolveRoot(cwd string) string {
 	if strings.TrimSpace(cwd) == "" {
 		cwd, _ = os.Getwd()
@@ -687,7 +690,7 @@ func ResolveRoot(cwd string) string {
 	if err != nil {
 		abs = filepath.Clean(cwd)
 	}
-	if dir, ok := findUp(abs, ".pcs", true); ok {
+	if dir, ok := findUpFunc(abs, hasFlowState); ok {
 		return dir
 	}
 	if dir, ok := findUp(abs, ".git", false); ok {
@@ -696,10 +699,27 @@ func ResolveRoot(cwd string) string {
 	return abs
 }
 
+// hasFlowState reports whether dir holds pcs flow state: a .pcs/flows
+// directory or a .pcs/active file.
+func hasFlowState(dir string) bool {
+	if info, err := os.Stat(filepath.Join(dir, ".pcs", "flows")); err == nil && info.IsDir() {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(dir, ".pcs", "active"))
+	return err == nil
+}
+
 func findUp(start, name string, wantDir bool) (string, bool) {
+	return findUpFunc(start, func(dir string) bool {
+		info, err := os.Stat(filepath.Join(dir, name))
+		return err == nil && (!wantDir || info.IsDir())
+	})
+}
+
+func findUpFunc(start string, match func(dir string) bool) (string, bool) {
 	dir := start
 	for {
-		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && (!wantDir || info.IsDir()) {
+		if match(dir) {
 			return dir, true
 		}
 		parent := filepath.Dir(dir)
