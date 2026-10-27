@@ -152,7 +152,24 @@ type Flow struct {
 	ClaimedAt      string `json:"claimed_at,omitempty"`
 	// UpdatedAt is refreshed on every state write.
 	UpdatedAt string `json:"updated_at,omitempty"`
+	// AwaitingUser is set by `pcs flow await` while the coordinator waits for
+	// the human to answer one blocking question; the Stop hook does not block
+	// then, and the next UserPromptSubmit of the owning session clears it.
+	AwaitingUser *Await `json:"awaiting_user,omitempty"`
 }
+
+// Await is the blocking question the coordinator is waiting on.
+type Await struct {
+	Question string `json:"question"`
+	AskedAt  string `json:"asked_at"`
+}
+
+// SessionEnv is the environment variable Claude Code sets for Bash commands
+// with the id of the running session; `pcs flow await` reads it by default.
+const SessionEnv = "CLAUDE_CODE_SESSION_ID"
+
+// AwaitCommand marks the active flow as waiting for the user's answer.
+const AwaitCommand = `pcs flow await --question "..."`
 
 // ForeignTo reports whether the flow is owned by a session other than
 // session. An unowned flow, or an unknown session, is never foreign.
@@ -505,6 +522,44 @@ func (s Store) Adopt() (*Flow, error) {
 	f.OwnerSessionID = ""
 	f.ClaimedAt = ""
 	return f, s.Save(f)
+}
+
+// Await marks the active flow as waiting for the user to answer question.
+// session is the caller's Claude Code session: an unowned flow is claimed for
+// it, and a flow owned by another session is refused. An empty session is
+// never foreign, as for hook payloads without a session id.
+func (s Store) Await(session, question string) (*Flow, error) {
+	question = strings.TrimSpace(question)
+	if question == "" {
+		return nil, errors.New("--question is required: state the one blocking question you will present to the user")
+	}
+	f, err := s.Active()
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return nil, ErrNoActiveFlow
+	}
+	session = strings.TrimSpace(session)
+	if f.ForeignTo(session) {
+		return nil, errors.New(f.ForeignNotice())
+	}
+	if f.OwnerSessionID == "" && session != "" {
+		f.OwnerSessionID = session
+		f.ClaimedAt = Now().Format(time.RFC3339)
+	}
+	f.AwaitingUser = &Await{Question: question, AskedAt: Now().Format(time.RFC3339)}
+	return f, s.Save(f)
+}
+
+// ClearAwait clears the awaiting-user mark of f and saves it. It reports
+// whether f was awaiting the user.
+func (s Store) ClearAwait(f *Flow) (bool, error) {
+	if f == nil || f.AwaitingUser == nil {
+		return false, nil
+	}
+	f.AwaitingUser = nil
+	return true, s.Save(f)
 }
 
 // ensureGitignore writes <root>/.pcs/.gitignore with "*" when it is missing,

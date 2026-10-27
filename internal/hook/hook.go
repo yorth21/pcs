@@ -516,19 +516,24 @@ type stopDecision struct {
 	Reason   string `json:"reason"`
 }
 
+// AwaitEscape tells a blocked coordinator how to end the turn to wait for
+// the user's decision.
+const AwaitEscape = "If you need the user's decision, run `" + flow.AwaitCommand + "`, present the question, and end the turn."
+
 func stop(store flow.Store, in Input) (any, error) {
 	f, _, err := sessionFlow(store, in.SessionID)
-	if in.StopHookActive || err != nil || f == nil {
-		// A flow owned by another session never blocks this session.
+	if in.StopHookActive || err != nil || f == nil || f.AwaitingUser != nil {
+		// A flow owned by another session never blocks this session, and a
+		// flow awaiting the user's answer lets the turn end.
 		return nil, err
 	}
 	if pending := f.Pending(); len(pending) > 0 {
 		return stopDecision{Decision: "block", Reason: fmt.Sprintf(
-			"PCD flow %s (%s) is incomplete: pending %s. Next: %s. If the user explicitly cancelled, run: %s",
-			f.Feature, f.Kind, strings.Join(pending, ", "), strings.TrimSuffix(f.Next().Instruction, "."), flow.AbandonCommand)}, nil
+			"PCD flow %s (%s) is incomplete: pending %s. Next: %s. %s If the user explicitly cancelled, run: %s",
+			f.Feature, f.Kind, strings.Join(pending, ", "), strings.TrimSuffix(f.Next().Instruction, "."), AwaitEscape, flow.AbandonCommand)}, nil
 	}
 	return stopDecision{Decision: "block", Reason: fmt.Sprintf(
-		"PCD flow %s (%s) is complete: run `%s` before ending the turn.", f.Feature, f.Kind, flow.CloseCommand)}, nil
+		"PCD flow %s (%s) is complete: run `%s` before ending the turn. %s", f.Feature, f.Kind, flow.CloseCommand, AwaitEscape)}, nil
 }
 
 type promptContext struct {
@@ -539,6 +544,10 @@ type promptContext struct {
 // NoFlowRule is the UserPromptSubmit context injected when no flow is active.
 const NoFlowRule = "PCD: before touching project files run `pcs flow start --feature <kebab> --kind audit|inline|t2|t3` (audit = read-only review of existing UI; never inline for audits), then follow `pcs flow next`."
 
+// AnsweredContext prefixes the UserPromptSubmit context when the prompt
+// answers the blocking question recorded by `pcs flow await`.
+const AnsweredContext = "The user answered your blocking question: continue the flow with `pcs flow next`."
+
 func userPromptSubmit(store flow.Store, in Input) (any, error) {
 	f, foreign, err := sessionFlow(store, in.SessionID)
 	if err != nil {
@@ -548,13 +557,23 @@ func userPromptSubmit(store flow.Store, in Input) (any, error) {
 	if foreign != nil {
 		ctx = NoFlowRule + " " + foreign.ForeignNotice()
 	}
+	answered := ""
+	if f != nil {
+		cleared, err := store.ClearAwait(f)
+		if err != nil {
+			return nil, err
+		}
+		if cleared {
+			answered = AnsweredContext + " "
+		}
+	}
 	if f != nil {
 		pending := f.Pending()
 		state := "all mandatory phases done"
 		if len(pending) > 0 {
 			state = "pending " + strings.Join(pending, ", ")
 		}
-		ctx = fmt.Sprintf("PCD flow %s (%s) is active: %s. Next: %s", f.Feature, f.Kind, state, f.Next().Instruction)
+		ctx = fmt.Sprintf("%sPCD flow %s (%s) is active: %s. Next: %s", answered, f.Feature, f.Kind, state, f.Next().Instruction)
 	}
 	return hookSpecific[promptContext]{promptContext{HookEventName: "UserPromptSubmit", AdditionalContext: ctx}}, nil
 }

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -30,13 +31,16 @@ func RunCLI(args []string, stdout, stderr io.Writer, workDir string) int {
 	fs.SetOutput(stderr)
 	cwd := fs.String("cwd", workDir, "Project directory (the root is resolved from it)")
 	asJSON := fs.Bool("json", false, "Output JSON")
-	var feature, kind, phase, status, agentID, reason *string
+	var feature, kind, phase, status, agentID, reason, question, session *string
 	var abandon *bool
 	switch sub {
 	case "start":
 		feature = fs.String("feature", "", "Kebab-case feature name")
 		kind = fs.String("kind", "", "Flow kind: audit, inline, t2, or t3")
 	case "status", "next", "adopt":
+	case "await":
+		question = fs.String("question", "", "The one blocking question you will present to the user")
+		session = fs.String("session", os.Getenv(SessionEnv), "Claude Code session id (default: $"+SessionEnv+")")
 	case "record":
 		phase = fs.String("phase", "", "Phase name")
 		status = fs.String("status", "", "Phase status: done or blocked")
@@ -81,6 +85,11 @@ func RunCLI(args []string, stdout, stderr io.Writer, workDir string) int {
 		if err == nil {
 			msg = "adopted " + f.Feature + ": the next hook event of this session claims it"
 		}
+	case "await":
+		f, err = store.Await(*session, *question)
+		if err == nil {
+			msg = "awaiting the user on " + f.Feature + ": present the question to the user and end the turn; the Stop hook does not block until the user answers"
+		}
 	case "record":
 		st := strings.TrimSpace(*status)
 		if st != StatusDone && st != StatusBlocked {
@@ -117,6 +126,10 @@ func RunCLI(args []string, stdout, stderr io.Writer, workDir string) int {
 		}
 		return writeJSON(stdout, view)
 	}
+	if sub == "await" {
+		fmt.Fprintf(stdout, "pcs flow: %s\nQuestion: %s\n", msg, f.AwaitingUser.Question)
+		return 0
+	}
 	if sub == "next" {
 		fmt.Fprintln(stdout, view.NextTransition.Instruction)
 		if view.NextTransition.Note != "" {
@@ -142,6 +155,9 @@ func printView(w io.Writer, v StatusView) {
 			owner = "unclaimed (the next hook event claims it)"
 		}
 		fmt.Fprintf(w, "  owner session: %s\n", owner)
+		if a := v.Flow.AwaitingUser; a != nil {
+			fmt.Fprintf(w, "  awaiting user since %s: %s\n", a.AskedAt, a.Question)
+		}
 		for _, p := range v.Flow.Phases {
 			fmt.Fprintf(w, "  - %s [%s] %s\n", p.Name, p.Status, strings.Join(p.Agents, " | "))
 		}
@@ -171,6 +187,8 @@ Subcommands:
   status                                              Show the active flow
   next                                                Print the typed next transition
   adopt                                               Hand the active flow to the session that runs it
+  await --question "..." [--session id]               Wait for the user's answer to one blocking question
+                                                      (the Stop hook does not block until the user replies)
   record --phase <p> --status done|blocked [--agent-id x]
                                                       Manually record a phase (source: manual)
   close [--abandon --reason "..."]                    Close the active flow
