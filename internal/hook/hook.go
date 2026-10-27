@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -151,10 +152,21 @@ func preToolUse(store flow.Store, in Input) (any, error) {
 	return nil, nil
 }
 
+// AllowedGenericAgents lists the non-pcs subagent types the main thread may
+// still launch, because they never read or edit project source.
+var AllowedGenericAgents = []string{"claude-code-guide", "statusline-setup"}
+
+// NonPCSAgentReason is the denial reason for generic subagents on the main thread.
+const NonPCSAgentReason = "Use the pcs-* agent returned by pcs flow next"
+
 func gateAgent(store flow.Store, in Input) (any, error) {
 	agent, _ := in.ToolInput["subagent_type"].(string)
+	agent = strings.TrimSpace(agent)
 	if !strings.HasPrefix(agent, "pcs-") {
-		return nil, nil
+		if slices.Contains(AllowedGenericAgents, agent) {
+			return nil, nil
+		}
+		return denyGenericAgent(store, agent)
 	}
 	f, err := store.Active()
 	if err != nil {
@@ -175,6 +187,24 @@ func gateAgent(store flow.Store, in Input) (any, error) {
 			f.Feature, f.Kind, agent, f.Phases[idx].Name, missing[0], f.Next().Instruction)), nil
 	}
 	return nil, nil
+}
+
+// denyGenericAgent blocks generic subagents (Explore, general-purpose, fork,
+// or an omitted subagent_type) so the coordinator cannot bypass PCD phases.
+func denyGenericAgent(store flow.Store, agent string) (any, error) {
+	name := agent
+	if name == "" {
+		name = "(default)"
+	}
+	f, err := store.Active()
+	if err != nil {
+		return nil, err
+	}
+	next := flow.NoFlowTransition().Instruction
+	if f != nil {
+		next = f.Next().Instruction
+	}
+	return deny(fmt.Sprintf("PCD: subagent %s is not allowed from the main thread. %s. Next: %s", name, NonPCSAgentReason, next)), nil
 }
 
 func gateRead(store flow.Store, action string) (any, error) {
