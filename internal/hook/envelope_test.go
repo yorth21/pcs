@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -169,13 +170,29 @@ func TestManualFlowRecordDenied(t *testing.T) {
 			}
 		})
 	}
-	// Subagents are never gated.
+	// Subagents may not self-report phases either, but their other Bash
+	// commands stay ungated.
 	root := newProject(t)
 	startFlow(t, root, flow.KindAudit)
+	for _, cmd := range []string{"pcs flow record --phase explore --status done", `bash -c "C:/tools/pcs.exe flow record --phase audit --status done"`} {
+		if got, reason := decision(t, runHook(t, "pre-tool-use", map[string]any{
+			"cwd": root, "tool_name": "Bash", "agent_id": "a1", "agent_type": "pcs-explorer",
+			"tool_input": map[string]any{"command": cmd},
+		})); got != "deny" || reason != ManualRecordReason {
+			t.Fatalf("subagent %q decision = %s (%s), want deny", cmd, got, reason)
+		}
+	}
 	if got, _ := decision(t, runHook(t, "pre-tool-use", map[string]any{
 		"cwd": root, "tool_name": "Bash", "agent_id": "a1",
-		"tool_input": map[string]any{"command": "pcs flow record --phase explore --status done"},
+		"tool_input": map[string]any{"command": "cat src/app.tsx"},
 	})); got != "allow" {
-		t.Fatalf("subagent decision = %s", got)
+		t.Fatalf("subagent cat decision = %s, want allow", got)
+	}
+	// Subagents cannot rewrite CLI-owned flow state either.
+	if got, _ := decision(t, runHook(t, "pre-tool-use", map[string]any{
+		"cwd": root, "tool_name": "Write", "agent_id": "a1",
+		"tool_input": map[string]any{"file_path": filepath.Join(root, ".pcs", "flows", "demo.json")},
+	})); got != "deny" {
+		t.Fatalf("subagent .pcs write decision = %s, want deny", got)
 	}
 }

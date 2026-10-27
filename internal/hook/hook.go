@@ -150,6 +150,9 @@ func delegateReason(f *flow.Flow, action string) string {
 	return fmt.Sprintf("PCD flow %s (%s) is active: %s from the main thread is not allowed; delegate instead. Next: %s", f.Feature, f.Kind, action, f.Next().Instruction)
 }
 
+// pcsStateReason is the denial reason for edits under .pcs/.
+const pcsStateReason = "PCD: .pcs/ holds CLI-owned flow state; change it only through `pcs flow` commands."
+
 const inlineExhausted = "inline budget exhausted; escalate with " + flow.AbandonCommand + " and pcs flow start --kind t2|audit"
 
 // sessionFlow loads the active flow, claims it for session when it has no
@@ -193,8 +196,20 @@ func preToolUse(store flow.Store, in Input) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Phase completion is recorded only by the SubagentStop hook: no Claude
+	// thread, main or subagent, may self-report it or rewrite flow state.
+	switch in.ToolName {
+	case "Bash":
+		if cmd, _ := in.ToolInput["command"].(string); FlowRecordCommand(cmd) {
+			return deny(ManualRecordReason), nil
+		}
+	case "Edit", "Write", "MultiEdit", "NotebookEdit":
+		if path := editPath(in); path != "" && within(store.Root, path) && hasDirPrefix(relSlash(store.Root, path), ".pcs") {
+			return deny(pcsStateReason), nil
+		}
+	}
 	if in.AgentID != "" {
-		// Subagents do the delegated work; they are never gated.
+		// Subagents do the delegated work; they are otherwise never gated.
 		return nil, nil
 	}
 	g := gate{store: store, f: own, foreign: foreign}
@@ -209,9 +224,6 @@ func preToolUse(store flow.Store, in Input) (any, error) {
 		return g.read(in.ToolName + " on " + relDisplay(store.Root, path))
 	case "Bash":
 		cmd, _ := in.ToolInput["command"].(string)
-		if FlowRecordCommand(cmd) {
-			return deny(ManualRecordReason), nil
-		}
 		if BashAllowed(cmd) {
 			return nil, nil
 		}
@@ -296,9 +308,6 @@ func (g gate) edit(in Input) (any, error) {
 	rel := relSlash(g.store.Root, path)
 	if hasDirPrefix(rel, "pcs") || hasDirPrefix(rel, ".atl") {
 		return nil, nil
-	}
-	if hasDirPrefix(rel, ".pcs") {
-		return deny("PCD: .pcs/ holds CLI-owned flow state; change it only through `pcs flow` commands."), nil
 	}
 	f := g.f
 	action := in.ToolName + " on " + rel
@@ -467,7 +476,7 @@ func EnvelopeStatus(path string) string {
 }
 
 // ManualRecordReason is the denial reason for main-thread `pcs flow record`.
-const ManualRecordReason = "Phase completion is recorded by the SubagentStop hook from the subagent Return Envelope. If it was not recorded, relaunch the agent so it ends with `**Status**: success|partial|blocked`. A human can run pcs flow record in their own terminal."
+const ManualRecordReason = "Phase completion is recorded by the SubagentStop hook from the subagent Return Envelope; no main thread or subagent may run pcs flow record. If it was not recorded, relaunch the agent so it ends with `**Status**: success|partial|blocked`. A human can run pcs flow record in their own terminal outside Claude."
 
 // flowRecordPattern finds a pcs binary (any path, optionally quoted, with or
 // without .exe) invoked with `flow record`, also inside `sh -c "..."` strings.
