@@ -77,13 +77,16 @@ func runVersion(args []string, env Env) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	info := installer.ResolveBuildInfo()
 	if *asJSON {
 		return writeJSONOutput(env.Stdout, map[string]string{
 			"name":    "pcs",
-			"version": installer.Version,
+			"version": info.Version,
+			"commit":  info.Commit,
+			"date":    info.Date,
 		})
 	}
-	fmt.Fprintf(env.Stdout, "pcs version %s\n", installer.Version)
+	fmt.Fprintln(env.Stdout, info.String())
 	return 0
 }
 

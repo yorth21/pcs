@@ -31,7 +31,7 @@ func TestCLISubcommands(t *testing.T) {
 			name:         "version command text output",
 			args:         []string{"version"},
 			wantExitCode: 0,
-			wantStdout:   []string{"pcs version 0.1.0"},
+			wantStdout:   []string{"pcs version ", "(commit ", ", built "},
 		},
 		{
 			name:         "version command json output",
@@ -305,5 +305,21 @@ func TestCLICodeGraphInit(t *testing.T) {
 				t.Errorf("stderr = %q, want substring %q", stderr.String(), tt.wantStderr)
 			}
 		})
+	}
+}
+
+func TestVersionJSONIncludesBuildMetadata(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"version", "--json"}, Env{Stdout: &stdout, Stderr: &stderr}); code != 0 {
+		t.Fatalf("pcs version --json exited %d: %s", code, stderr.String())
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("decode %q: %v", stdout.String(), err)
+	}
+	for _, key := range []string{"name", "version", "commit", "date"} {
+		if parsed[key] == "" {
+			t.Errorf("pcs version --json missing %q: %v", key, parsed)
+		}
 	}
 }

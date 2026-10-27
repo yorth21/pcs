@@ -4,6 +4,80 @@
 
 ---
 
+## Installation
+
+`pcs` is a single static binary with no runtime dependencies. Pick one method; every method installs the same `pcs` command. Check the result with `pcs version`, which prints the version, commit, and build date.
+
+### Option 1 — `go install` (any OS, Go 1.24+)
+
+```bash
+go install github.com/yorth21/pcs/cmd/pcs@latest   # or @v1.2.3 for a specific release
+```
+
+`go install` writes the binary to `$(go env GOPATH)/bin`: `~/go/bin` on macOS/Linux, `%USERPROFILE%\go\bin` on Windows. That directory must be on your `PATH`:
+
+```bash
+# macOS / Linux (add to ~/.zshrc or ~/.bashrc)
+export PATH="$PATH:$(go env GOPATH)/bin"
+```
+
+```powershell
+# Windows (PowerShell): append to the user PATH, then open a new terminal
+$p = [Environment]::GetEnvironmentVariable('Path', 'User'); [Environment]::SetEnvironmentVariable('Path', "$p;$env:USERPROFILE\go\bin", 'User')
+```
+
+### Option 2 — Download a release binary
+
+Each [GitHub release](https://github.com/yorth21/pcs/releases) publishes `pcs_<version>_<os>_<arch>` archives for `windows_amd64` (`.zip`), `darwin_arm64` and `darwin_amd64` (`.tar.gz`), and `linux_amd64` (`.tar.gz`), plus a `checksums.txt` (SHA-256). Always verify the archive against `checksums.txt` before installing it. Set `VERSION` to the release without its leading `v`.
+
+```bash
+# Linux (amd64)
+VERSION=1.2.3
+ARCHIVE="pcs_${VERSION}_linux_amd64.tar.gz"
+curl -fsSLO "https://github.com/yorth21/pcs/releases/download/v${VERSION}/${ARCHIVE}"
+curl -fsSLO "https://github.com/yorth21/pcs/releases/download/v${VERSION}/checksums.txt"
+grep " ${ARCHIVE}\$" checksums.txt | sha256sum --check -
+tar -xzf "$ARCHIVE" pcs && mkdir -p ~/.local/bin && install -m 0755 pcs ~/.local/bin/pcs
+```
+
+```bash
+# macOS (darwin_arm64 for Apple silicon, darwin_amd64 for Intel)
+VERSION=1.2.3
+ARCHIVE="pcs_${VERSION}_darwin_arm64.tar.gz"
+curl -fsSLO "https://github.com/yorth21/pcs/releases/download/v${VERSION}/${ARCHIVE}"
+curl -fsSLO "https://github.com/yorth21/pcs/releases/download/v${VERSION}/checksums.txt"
+grep " ${ARCHIVE}\$" checksums.txt | shasum -a 256 --check -
+tar -xzf "$ARCHIVE" pcs && mkdir -p ~/.local/bin && install -m 0755 pcs ~/.local/bin/pcs
+```
+
+The binaries are not code-signed. A download made with `curl` is not quarantined; if you downloaded the archive with a browser instead, run `xattr -d com.apple.quarantine ~/.local/bin/pcs` once.
+
+```powershell
+# Windows (PowerShell, amd64)
+$Version = '1.2.3'
+$Archive = "pcs_${Version}_windows_amd64.zip"
+Invoke-WebRequest "https://github.com/yorth21/pcs/releases/download/v$Version/$Archive" -OutFile $Archive
+Invoke-WebRequest "https://github.com/yorth21/pcs/releases/download/v$Version/checksums.txt" -OutFile checksums.txt
+$expected = ((Get-Content checksums.txt) | Where-Object { $_ -match " $([regex]::Escape($Archive))$" }).Split(' ')[0]
+$actual = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLower()
+if ($actual -ne $expected) { throw "checksum mismatch for $Archive" }
+Expand-Archive $Archive -DestinationPath "$env:LOCALAPPDATA\pcs\bin" -Force
+```
+
+Put the install directory (`~/.local/bin`, or `%LOCALAPPDATA%\pcs\bin` on Windows) on your `PATH` as shown in Option 1. No package-manager distribution (Homebrew, Scoop, winget) exists yet.
+
+### Option 3 — Build from source
+
+```bash
+git clone https://github.com/yorth21/pcs.git && cd pcs
+make build          # writes bin/pcs with version, commit, and build date
+make install        # or: go install into $(go env GOPATH)/bin
+```
+
+Without `make`, `go build -o bin/pcs ./cmd/pcs` works on every OS; `pcs version` then reports the Go build metadata (or `dev`) instead of the release version.
+
+---
+
 ## Quick Path — Install & Launch (`pcs` CLI)
 
 Build the zero-dependency Go binary and install `pcs` (`--scope global` by default, respecting `$CLAUDE_CONFIG_DIR` and `$PCS_INSTALL_SCOPE`, `--scope workspace` for repository-level installation, or `--scope profile` for a dedicated `~/.claude-pcs` profile with POSIX/Windows launchers; profile scope ignores `$CLAUDE_CONFIG_DIR`, is selected only by `--profile-dir`, and refuses any target that is the home directory, the main config directory or one of its ancestors, or whose `.claude.json`/`settings.json` is the main profile's file). Without `--scope` (or `--profile-dir`/`--target-dir`/`PCS_INSTALL_SCOPE`), `pcs install` refuses when only a profile install exists, so the global default never adds a second install by accident:
@@ -40,7 +114,7 @@ make build
 | `pcs skill-registry refresh [--cwd <dir>] [--skills-dir <dir>] [--json]` | Scan `SKILL.md` frontmatter and write deterministic `.atl/pcs-skill-registry.md` with SHA-256 cache-hit header |
 | `pcs codegraph init [--cwd <dir>] [--json]` | Validate project root (refusing `$HOME`, `/`, `os.TempDir()`, `/tmp`, `/var/tmp`) and initialize `.codegraph/` index |
 | `pcs uninstall [--scope global\|workspace\|profile] [--profile-dir <dir>] [--target-dir <dir>] [--remove-mcp [--force]] [--dry-run] [--json]` | Cleanly remove all 5 `pcs:*` markers, `pcs-*` native subagents, `pcs-*` skills, `.atl/pcs-skill-registry.md`, launchers, `shared-mcp.json`, and `pcs`-added MCP/hook deltas without touching user files. MCP servers, permissions, and plugins are removed only when `.pcs-state.json` records that `pcs` added them (an empty record removes nothing). Without a record, `--remove-mcp` refuses unless `--force` is given, which removes the default `engram`, `context7`, and `codegraph` entries and the `engram@engram` plugin with a warning. The profile `statusLine` is removed only while it still equals the value `pcs` copied (an edited one is kept and reported). Files and settings containers (`permissions`, `permissions.allow`, `enabledPlugins`) that `pcs` created are deleted once nothing but `pcs` entries was in them, so no empty `settings.json` is left behind. Every `*.pre-pcs.bak` backup is kept and listed in the report; `pcs` never writes one for a file it created itself. Without `--scope`/`--profile-dir`/`--target-dir` (and no `PCS_INSTALL_SCOPE`), it discovers existing installs like `sync`: it removes the single one found, and refuses when none or several exist. `--force` requires `--scope`, `--profile-dir`, or `--target-dir` on the command line (`PCS_INSTALL_SCOPE` alone is not enough) |
-| `pcs version [--json]` | Print `pcs` CLI version |
+| `pcs version [--json]` | Print the `pcs` version, commit, and build date (set at release build time, or read from the Go build info for `go install`) |
 
 ---
 

@@ -25,7 +25,6 @@ const (
 
 	DefaultAdapter = "react-shadcn"
 	DefaultPersona = "gentleman"
-	Version        = "0.1.0"
 
 	StateFileName          = ".pcs-state.json"
 	AgentOwnershipFileName = ".pcs-native-agent-ownership.json"
