@@ -69,6 +69,12 @@ func TestInstallScopesAndLifecycle(t *testing.T) {
 			if rep.Scope != tt.scope {
 				t.Errorf("rep.Scope = %q, want %q", rep.Scope, tt.scope)
 			}
+			// Every stack-agnostic brain skill is installed next to the adapter.
+			for _, skill := range []string{"pcs-core", "pcs-saas", "pcs-adapter-react-shadcn"} {
+				if _, statErr := os.Stat(filepath.Join(targetDir, "skills", skill, "SKILL.md")); statErr != nil {
+					t.Errorf("skill %s not installed: %v", skill, statErr)
+				}
+			}
 
 			// 3. Status check must report Installed = true.
 			status, err := Status(opts)

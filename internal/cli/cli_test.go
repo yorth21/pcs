@@ -79,7 +79,7 @@ func TestCLISubcommands(t *testing.T) {
 			name:         "skill-registry refresh generates .atl/pcs-skill-registry.md",
 			args:         []string{"skill-registry", "refresh", "--cwd", fakeHome, "--skills-dir", filepath.Join(profileDir, "skills")},
 			wantExitCode: 0,
-			wantStdout:   []string{"pcs-skill-registry.md", "2 skills"},
+			wantStdout:   []string{"pcs-skill-registry.md", "3 skills"},
 		},
 		{
 			name:         "uninstall command removes pcs artifacts cleanly",

@@ -1510,7 +1510,7 @@ func Uninstall(opts Options) (*Report, error) {
 		})
 	}
 
-	skillSubdirs := []string{"pcs-core"}
+	skillSubdirs := append([]string{}, assets.AgnosticSkills...)
 	for _, a := range assets.SupportedAdapters {
 		skillSubdirs = append(skillSubdirs, "pcs-adapter-"+a)
 	}
@@ -1748,6 +1748,7 @@ func Status(opts Options) (*StatusReport, error) {
 	skillChecks := map[string]string{
 		"_shared/pcs-phase-common.md": filepath.Join(layout.skillsDir, "_shared", "pcs-phase-common.md"),
 		"pcs-core":                    filepath.Join(layout.skillsDir, "pcs-core", "SKILL.md"),
+		"pcs-saas":                    filepath.Join(layout.skillsDir, "pcs-saas", "SKILL.md"),
 		"pcs-adapter-react-shadcn":    filepath.Join(layout.skillsDir, "pcs-adapter-react-shadcn", "SKILL.md"),
 	}
 	allSkillsPresent := true

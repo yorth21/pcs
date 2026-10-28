@@ -101,10 +101,23 @@ func NativeAgents() ([]FileEntry, error) {
 	return entries, nil
 }
 
-// CoreSkillFiles returns all embedded files under brain/skills/pcs-core/ with
-// paths relative to the skills directory (e.g. "pcs-core/SKILL.md").
+// AgnosticSkills lists the stack-agnostic brain skills installed with every
+// adapter.
+var AgnosticSkills = []string{"pcs-core", "pcs-saas"}
+
+// CoreSkillFiles returns all embedded files of the stack-agnostic skills
+// (AgnosticSkills) with paths relative to the skills directory (e.g.
+// "pcs-core/SKILL.md", "pcs-saas/SKILL.md").
 func CoreSkillFiles() ([]FileEntry, error) {
-	return walkSkillSubtree("pcs-core")
+	var out []FileEntry
+	for _, name := range AgnosticSkills {
+		files, err := walkSkillSubtree(name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, files...)
+	}
+	return out, nil
 }
 
 // AdapterSkillDirName maps a short adapter name (e.g. "react-shadcn") or full
