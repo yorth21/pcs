@@ -17,6 +17,7 @@ Do not load for non-React stacks or backend-only services.
 
 - **Blueprint first**: build each page from the `assets/templates/` blueprint of its `tpl-*` ID and each spec node from its row in `references/05-saas-pattern-mapping.md`; never improvise layout, states, or ARIA.
 - **Inventory first**: apply the `pcs-saas` `references/06-ui-inventory.md` Reuse Rule to every `org-*`/`mol-*` node; an inventory component implementing the same ID MUST be reused or extended.
+- **Project infrastructure wins**: blueprint imports (`@/lib/api-client`, `@/lib/format`, `--warning`/`--success`/`--info` tokens, `wide:` breakpoint) are placeholders; map them to the HTTP client, formatters, tokens, and breakpoints recorded in `pcs/design/inventory.md`. Never add a second API client, formatter module, or token set unless the Page Composition Spec decides it.
 - **Vanilla `shadcn/ui` first**: compose `@/components/ui/*` directly, no pass-through wrappers; import `radix-ui` only when no primitive exists.
 - **Promotion Rule**: single-feature code stays in `src/features/[feature]/[subfeature]/`; promote to `src/components/{ui,form,data-table,layout}/` only when `>= 2` features share it.
 - Never use `Atom`, `Molecule`, `Organism`, or `Template` in paths or identifiers.

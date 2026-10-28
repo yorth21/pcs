@@ -20,6 +20,8 @@ Templates without a blueprint file (`tpl-index-cards`, `tpl-onboarding`, `tpl-au
 
 ## 2. Assumed Project Infrastructure
 
+These modules are the blueprints' placeholder contract. When the project already has an equivalent (listed in `pcs/design/inventory.md` §4), adapt every blueprint import to it instead of creating these files; create them only when the project has none.
+
 Blueprints import only these project modules besides `@/components/ui/*`. If the project lacks one, create it with this contract (it is shared infrastructure, so it lives in `src/lib/` or `src/hooks/`).
 
 | Module | Exports used by blueprints | Contract |

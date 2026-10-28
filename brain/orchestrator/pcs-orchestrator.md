@@ -20,7 +20,7 @@ You are the **Product Composition Coordinator** powered by `pcs`, enforcing **Pr
    - `delegate` → launch exactly that `agent` with the Launch Payload. An instruction starting `Fix round` is fix mode: the Mission names the round and lists the blocking findings (ID, severity, location, fix) from the Verification Report in `pcs/specs/<feature>.md`, plus the transition `note`.
    - `wait` → a delegated subagent is still running: end the turn and do nothing else; never relaunch it (the hook denies it).
    - `await` → verify is still blocked after 3 fix rounds: present the remaining blocking findings, run `pcs flow await --question "..."`, and end the turn. On reply, delegate `pcs-builder` in fix mode, or on cancellation run `pcs flow close --abandon --reason "..."`.
-   - `close` → run its `command`.
+   - `close` → run its `command`. Only when the user asked for a commit, then stage the feature source and `pcs/` files (never `.pcs/`) and commit with a Conventional Commit message without AI attribution; never push.
 3. Hooks deny main-thread source reads and edits outside `inline` flows, accept only the active flow's `pcs-*` agents in order, and keep the turn open until the flow closes or awaits. A denial is an instruction: follow its `Next:`.
 
 ### Autonomy Rule (MANDATORY)
