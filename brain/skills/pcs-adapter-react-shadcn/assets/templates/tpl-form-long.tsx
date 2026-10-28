@@ -118,7 +118,10 @@ export const vendorFormSchema = z.object({
   notes: z.string().trim().max(500, "Keep notes under 500 characters.").optional(),
 });
 
-export type VendorFormValues = z.infer<typeof vendorFormSchema>;
+export type VendorFormValues = z.output<typeof vendorFormSchema>;
+// z.coerce makes the input type differ from the output type (zod 4): the form
+// holds input values and the resolver hands submit handlers parsed output.
+type VendorFormInput = z.input<typeof vendorFormSchema>;
 type VendorFieldName = keyof VendorFormValues;
 
 const vendorDefaults: VendorFormValues = {
@@ -209,7 +212,7 @@ function ErrorSummary({
   formError,
   summaryRef,
 }: {
-  errors: FieldErrors<VendorFormValues>;
+  errors: FieldErrors<VendorFormInput>;
   formError?: string;
   summaryRef: React.RefObject<HTMLDivElement | null>;
 }) {
@@ -257,7 +260,7 @@ function VendorField({
   readOnly,
   className,
 }: {
-  form: UseFormReturn<VendorFormValues>;
+  form: UseFormReturn<VendorFormInput, unknown, VendorFormValues>;
   name: VendorFieldName;
   readOnly: boolean;
   className?: string;
@@ -341,7 +344,7 @@ export function VendorFormScreen({ vendorId }: { vendorId?: string }) {
   const [formError, setFormError] = React.useState<string>();
   const [savedAt, setSavedAt] = React.useState<number>();
 
-  const form = useForm<VendorFormValues>({
+  const form = useForm<VendorFormInput, unknown, VendorFormValues>({
     resolver: zodResolver(vendorFormSchema),
     defaultValues: vendorDefaults,
     values: vendor.data, // edit mode: reset to server values once loaded

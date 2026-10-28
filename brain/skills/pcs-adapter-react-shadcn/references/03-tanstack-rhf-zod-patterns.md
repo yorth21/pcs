@@ -160,3 +160,15 @@ export const procedureColumns: ColumnDef<ProcedureRecord>[] = [
      };
      ```
    - Alternatively, trigger an inline confirmation alert when `isDirty` is true so users never lose typed work on an accidental backdrop click.
+
+## Zod 4 Input and Output Types
+
+When a schema uses `z.coerce`, `.default()`, `.catch()`, or `.transform()`, its input type differs from its output type, and `useForm<z.infer<typeof schema>>` with `zodResolver(schema)` fails to typecheck. Type the form with both:
+
+```tsx
+type FormInput = z.input<typeof schema>;   // what the fields hold
+type FormValues = z.output<typeof schema>; // what onSubmit receives
+const form = useForm<FormInput, unknown, FormValues>({ resolver: zodResolver(schema) });
+```
+
+Pass `UseFormReturn<FormInput, unknown, FormValues>` to child field components, store drafts as `Partial<FormInput>`, and render coerced fields with `value={String(field.value ?? "")}`.

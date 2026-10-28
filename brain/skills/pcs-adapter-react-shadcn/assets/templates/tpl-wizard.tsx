@@ -86,7 +86,9 @@ export const connectionWizardSchema = z
     if (values.sourceType === "rest-api" && !values.baseUrl?.startsWith("https://")) ctx.addIssue({ code: "custom", path: ["baseUrl"], message: "Enter an address that starts with https://." });
   });
 
-export type ConnectionWizardValues = z.infer<typeof connectionWizardSchema>;
+export type ConnectionWizardValues = z.output<typeof connectionWizardSchema>;
+// z.coerce makes the input type differ from the output type (zod 4).
+type ConnectionWizardInput = z.input<typeof connectionWizardSchema>;
 
 const steps = [
   { id: "source", name: "Source", fields: ["sourceType", "name"] },
@@ -111,7 +113,7 @@ const routeApi = getRouteApi("/_wizard/connections/new");
 interface WizardContext {
   canCreate: boolean;
   credentials: { id: string; label: string }[];
-  draft?: { values: Partial<ConnectionWizardValues>; completedSteps: StepId[] };
+  draft?: { values: Partial<ConnectionWizardInput>; completedSteps: StepId[] };
 }
 
 interface CommitResult {
@@ -129,7 +131,7 @@ function useWizardContext(draftId: string | undefined) {
 
 function useSaveDraft() {
   return useMutation({
-    mutationFn: (payload: { draftId?: string; values: Partial<ConnectionWizardValues>; completedSteps: StepId[] }) =>
+    mutationFn: (payload: { draftId?: string; values: Partial<ConnectionWizardInput>; completedSteps: StepId[] }) =>
       apiClient.post<{ draftId: string }>("/connections/drafts", payload),
   });
 }
@@ -224,7 +226,7 @@ export function ConnectionWizardScreen() {
   const [commitError, setCommitError] = React.useState<string>();
   const stepHeadingRef = React.useRef<HTMLHeadingElement>(null);
 
-  const form = useForm<ConnectionWizardValues>({
+  const form = useForm<ConnectionWizardInput, unknown, ConnectionWizardValues>({
     resolver: zodResolver(connectionWizardSchema),
     defaultValues: { frequency: "daily", startTime: "02:00", name: "", credentialId: "" },
     mode: "onTouched",
@@ -471,7 +473,7 @@ export function ConnectionWizardScreen() {
                       render={({ field, fieldState }) => (
                         <Field data-invalid={fieldState.invalid}>
                           <FieldLabel htmlFor="db-port">Port</FieldLabel>
-                          <Input {...field} value={field.value ?? ""} id="db-port" inputMode="numeric" className="w-[10ch] tabular-nums" aria-invalid={fieldState.invalid} />
+                          <Input {...field} value={String(field.value ?? "")} id="db-port" inputMode="numeric" className="w-[10ch] tabular-nums" aria-invalid={fieldState.invalid} />
                           <FieldError errors={[fieldState.error]} />
                         </Field>
                       )}
