@@ -37,7 +37,7 @@ func RunCLI(args []string, stdout, stderr io.Writer, workDir string) int {
 	case "start":
 		feature = fs.String("feature", "", "Kebab-case feature name")
 		kind = fs.String("kind", "", "Flow kind: audit, inline, t2, or t3")
-	case "status", "next", "adopt":
+	case "status", "next", "adopt", "release":
 	case "await":
 		question = fs.String("question", "", "The one blocking question you will present to the user")
 		session = fs.String("session", os.Getenv(SessionEnv), "Claude Code session id (default: $"+SessionEnv+")")
@@ -84,6 +84,11 @@ func RunCLI(args []string, stdout, stderr io.Writer, workDir string) int {
 		f, err = store.Adopt()
 		if err == nil {
 			msg = "adopted " + f.Feature + ": the next hook event of this session claims it"
+		}
+	case "release":
+		f, err = store.Release()
+		if err == nil {
+			msg = "released in-flight delegations of " + f.Feature + ": follow pcs flow next"
 		}
 	case "await":
 		f, err = store.Await(*session, *question)
@@ -193,6 +198,7 @@ Subcommands:
   status                                              Show the active flow
   next                                                Print the typed next transition (start, delegate, wait, await, or close)
   adopt                                               Hand the active flow to the session that runs it
+  release                                             Clear in-flight delegations left by an interrupted session
   await --question "..." [--session id]               Wait for the user's answer to one blocking question
                                                       (the Stop hook does not block until the user replies)
   record --phase <p> --status done|blocked [--agent-id x]

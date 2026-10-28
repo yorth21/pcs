@@ -551,6 +551,8 @@ func (s Store) Adopt() (*Flow, error) {
 	}
 	f.OwnerSessionID = ""
 	f.ClaimedAt = ""
+	// Delegations launched by the previous session died with it.
+	f.InFlight = nil
 	return f, s.Save(f)
 }
 

@@ -174,6 +174,29 @@ func TestFixLoopBuilderNotSuccess(t *testing.T) {
 	}
 }
 
+func TestReleaseAndAdoptClearInFlight(t *testing.T) {
+	s := Store{Root: t.TempDir()}
+	f, err := s.Start("demo", KindT2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartDelegation(f, "pcs-explorer", "explore"); err != nil {
+		t.Fatal(err)
+	}
+	if f, err = s.Release(); err != nil || f.HasLiveInFlight() {
+		t.Fatalf("release: err=%v inFlight=%v", err, f.InFlight)
+	}
+	if tr := f.Next(); tr.Kind != TransitionDelegate || tr.Agent != "pcs-explorer" {
+		t.Fatalf("next after release = %+v", tr)
+	}
+	if err := s.StartDelegation(f, "pcs-explorer", "explore"); err != nil {
+		t.Fatal(err)
+	}
+	if f, err = s.Adopt(); err != nil || f.HasLiveInFlight() {
+		t.Fatalf("adopt: err=%v inFlight=%v", err, f.InFlight)
+	}
+}
+
 func TestInFlight(t *testing.T) {
 	now := fixedClock(t, time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC))
 	s := Store{Root: t.TempDir()}

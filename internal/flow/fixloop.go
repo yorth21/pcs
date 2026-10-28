@@ -63,6 +63,23 @@ func (f *Flow) Running(agentType, phase string) (InFlight, bool) {
 	return InFlight{}, false
 }
 
+// ReleaseCommand clears in-flight delegations left by an interrupted session.
+const ReleaseCommand = "pcs flow release"
+
+// Release clears every in-flight delegation of the active flow, for a session
+// that was interrupted while a subagent ran, and saves it.
+func (s Store) Release() (*Flow, error) {
+	f, err := s.Active()
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return nil, ErrNoActiveFlow
+	}
+	f.InFlight = nil
+	return f, s.Save(f)
+}
+
 // StartDelegation prunes expired in-flight entries of f, records agentType as
 // running for phase, and saves f.
 func (s Store) StartDelegation(f *Flow, agentType, phase string) error {
@@ -92,7 +109,7 @@ func (f *Flow) finishDelegation(agentType string) {
 
 // WaitInstruction tells the coordinator a delegation is still running.
 func WaitInstruction(e InFlight) string {
-	return fmt.Sprintf("%s is running (phase %s, started %s); wait for its completion notification, do not relaunch it. Its Return Envelope status is recorded automatically when it stops.", e.AgentType, e.Phase, e.StartedAt)
+	return fmt.Sprintf("%s is running (phase %s, started %s); wait for its completion notification, do not relaunch it. Its Return Envelope status is recorded automatically when it stops. Only if the session was interrupted and the subagent no longer runs, run `%s`, then follow pcs flow next.", e.AgentType, e.Phase, e.StartedAt, ReleaseCommand)
 }
 
 func waitTransition(f *Flow, e InFlight) Transition {
